@@ -828,6 +828,8 @@ const SESSION_KEY = 'current';
 let sessionReady = false;
 let saveTimer = null;
 let processingState = null;
+let importQueue = Promise.resolve();
+let queuedImportJobs = 0;
 let estimatedAppBytes = 0;
 const historyPast = [];
 const historyFuture = [];
@@ -1357,9 +1359,47 @@ function insertAnchorIntoTimeline(id) {
   timeline.splice(insertAt < 0 ? timeline.length : insertAt, 0, id);
 }
 
+function isSupportedPhotoFile(file) {
+  return file.type.startsWith('image/')
+    || file.name.match(/\.(jpg|jpeg|png|webp|avif|heic|heif|tiff|tif|raw|crw|cr2|dng|dcr|nef|arw|raf|orf|rw2)$/i);
+}
+
+function countSupportedPhotoFiles(files) {
+  let total = 0;
+  for (let i = 0; i < files.length; i++) if (isSupportedPhotoFile(files[i])) total++;
+  return total;
+}
+
+// New selections join one serial queue. This prevents concurrent imports from
+// overwriting shared progress state or competing to update the same DOM.
+function handleFiles(files) {
+  const total = countSupportedPhotoFiles(files);
+  if (!total) return Promise.resolve();
+
+  if (!processingState?.active) {
+    processingState = { active: true, processed: 0, total: 0, errors: [] };
+  }
+  processingState.total += total;
+  queuedImportJobs++;
+  updateProcessingProgress();
+
+  const job = importQueue
+    .then(() => processFiles(files))
+    .catch(error => {
+      processingState?.errors.push(`Import error: ${error.message}`);
+    })
+    .finally(() => {
+      queuedImportJobs--;
+      if (!queuedImportJobs) processingState.active = false;
+      updateProcessingProgress();
+    });
+  importQueue = job;
+  return importQueue;
+}
+
 // Files are processed serially. Persistent thumbnails are small; source files
 // stay lazy and are read only when opened in the full-screen viewer.
-async function handleFiles(files) {
+async function processFiles(files) {
   const existingPhotosByName = new Map(Object.values(photos).map(photo => [photo.name, photo]));
   let renderedTimeline = [...timeline];
   let pendingTimelineIds = [];
@@ -1403,22 +1443,13 @@ async function handleFiles(files) {
     }
   };
 
-  let total = 0;
-  for (let i = 0; i < files.length; i++) {
-    const file = files[i];
-    if (file.type.startsWith('image/') || file.name.match(/\.(jpg|jpeg|png|webp|avif|heic|heif|tiff|tif|raw|crw|cr2|dng|dcr|nef|arw|raf|orf|rw2)$/i)) total++;
-  }
-  if (!total) return;
-
   pushHistory();
-  processingState = { active: true, processed: 0, total, errors: [] };
-  updateProcessingProgress();
 
   // Process one File at a time. Do not Array.from(files): that would keep a
   // second in-memory reference to every selected file until the whole batch ends.
   for (let i = 0; i < files.length; i++) {
     const file = files[i];
-    if (!(file.type.startsWith('image/') || file.name.match(/\.(jpg|jpeg|png|webp|avif|heic|heif|tiff|tif|raw|crw|cr2|dng|dcr|nef|arw|raf|orf|rw2)$/i))) continue;
+    if (!isSupportedPhotoFile(file)) continue;
     const existingPhoto = existingPhotosByName.get(file.name);
     const sourceIdentity = await getSourceIdentity(file);
     if (existingPhoto) {
@@ -1469,8 +1500,6 @@ async function handleFiles(files) {
   }
 
   flushImportedCards();
-  processingState.active = false;
-  updateProcessingProgress();
 
   sortUnplacedByName();
   interpolateAll();
