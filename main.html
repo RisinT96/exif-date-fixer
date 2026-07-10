@@ -919,6 +919,24 @@ function restoreEditorState(state) {
     scheduleSessionSave();
     return;
   }
+
+  if (samePhotos) {
+    const previousTimelineIds = new Set(previousTimeline);
+    const nextTimelineIds = new Set(timeline);
+    const enteringTimeline = timeline.filter(id => !previousTimelineIds.has(id));
+    const leavingTimeline = previousTimeline.filter(id => !nextTimelineIds.has(id));
+    if (enteringTimeline.length || leavingTimeline.length) {
+      removePoolCards(enteringTimeline);
+      removeTimelineEntries(leavingTimeline);
+      insertPoolCards(leavingTimeline);
+      insertTimelineEntries(enteringTimeline);
+      const movedIds = new Set([...enteringTimeline, ...leavingTimeline]);
+      const affectedIds = getTransferAffectedIds(previousTimeline, timeline, movedIds);
+      if (timeline.length) reorderTimelineDom(affectedIds, new Set());
+      else finalizeIncrementalTransfer(affectedIds);
+      return;
+    }
+  }
   render();
 }
 
@@ -1460,6 +1478,7 @@ function removeSelectedFromTimeline() {
   const ids = selectedIdsInSource('timeline');
   if (!ids.length) return;
 
+  const previousTimeline = [...timeline];
   pushHistory();
   const selected = new Set(ids);
   timeline = timeline.filter(id => !selected.has(id));
@@ -1472,7 +1491,9 @@ function removeSelectedFromTimeline() {
   selectedIds.clear();
   selectionAnchor = null;
   interpolateAll();
-  render({ animateIds: new Set(ids) });
+  removeTimelineEntries(ids);
+  insertPoolCards(ids);
+  finalizeIncrementalTransfer(getTransferAffectedIds(previousTimeline, timeline, new Set(ids)));
 }
 
 function selectAllInActiveList() {
@@ -1491,9 +1512,9 @@ function clearSelection() {
   updateSelectionUI();
 }
 
-function refreshTimelineCardDisplay(id) {
+function refreshTimelineCardDisplay(id, card = null) {
   const photo = photos[id];
-  const card = document.querySelector(`#timelineList .photo-card[data-photo-id="${id}"]`);
+  card ||= document.querySelector(`#timelineList .photo-card[data-photo-id="${id}"]`);
   if (!photo || !card) return;
 
   const isAnchor = photo.timestamp && !photo._interpolated;
@@ -1521,6 +1542,138 @@ function refreshTimelineCardDisplay(id) {
   spacer.insertAdjacentHTML('beforebegin', sourceBadge + badge);
 }
 
+function refreshTimelineCards(ids) {
+  const cards = new Map();
+  document.querySelectorAll('#timelineList .photo-card[data-photo-id]').forEach(card => {
+    cards.set(card.dataset.photoId, card);
+  });
+  ids.forEach(id => refreshTimelineCardDisplay(String(id), cards.get(String(id))));
+}
+
+function poolCardMarkup(id) {
+  const photo = photos[id];
+  const selected = selectedIds.has(String(id)) ? ' selected' : '';
+  return `<div class="pool-card${selected}" data-photo-id="${id}" draggable="true"
+    onclick="handleCardClick(event,${id},'pool')"
+    ondragstart="onCardDragStart(event,${id},'pool')"
+    ondragend="onCardDragEnd(event)"
+    title="${photo.name.replace(/"/g,'&quot;')}">
+    <div class="pool-thumb" onclick="openPhotoViewer(event,${id})">${photo.thumbURL ? `<img src="${photo.thumbURL}" loading="lazy" decoding="async" alt="">` : '🖼'}</div>
+    <div class="pool-name">${photo.name}</div>
+  </div>`;
+}
+
+function timelineEntryMarkup(id) {
+  const photo = photos[id];
+  const displayTime = getDisplayTime(photo);
+  const isAnchor = photo.timestamp && !photo._interpolated;
+  const isInterp = !!photo._interpolated;
+  const cardClass = isAnchor ? 'anchored' : isInterp ? 'interpolated' : 'unplaced-card';
+  const selectedClass = selectedIds.has(String(id)) ? ' selected' : '';
+  const timeClass = isAnchor ? 'known' : isInterp ? 'interpolated' : '';
+  const timeString = displayTime ? fmtTime(displayTime.time) : 'No timestamp';
+  const badge = isAnchor
+    ? `<span class="photo-badge badge-anchor">ANCHOR</span>`
+    : isInterp ? `<span class="photo-badge badge-interp">~</span>` : '';
+  const sourceBadge = isAnchor && photo.timestampSource
+    ? `<span class="photo-badge badge-source" title="Timestamp source">${photo.timestampSource.toUpperCase()}</span>` : '';
+  return `<div class="timeline-entry">${mkDropTarget(0)}<div class="photo-card ${cardClass}${selectedClass}" data-photo-id="${id}" draggable="true"
+    onclick="handleCardClick(event,${id},'timeline')"
+    oncontextmenu="openCardContextMenu(event,${id},'timeline')"
+    ondragstart="onCardDragStart(event,${id},'timeline')"
+    ondragend="onCardDragEnd(event)">
+    <div class="photo-thumb" onclick="openPhotoViewer(event,${id})">${photo.thumbURL ? `<img src="${photo.thumbURL}" loading="lazy" decoding="async" alt="">` : '🖼'}</div>
+    <div class="photo-footer">
+      <div class="photo-name">${photo.name}</div>
+      <div class="photo-time ${timeClass}">${timeString}</div>
+      <div class="card-actions">
+        ${sourceBadge}
+        ${badge}
+        <div style="flex:1"></div>
+        <button class="remove-btn" onclick="removeFromTimeline(${id})" title="Remove">×</button>
+        <button class="btn btn-ghost" style="font-size:10px;padding:2px 5px;flex-shrink:0" onclick="openTimestampModal(${id})" title="Set timestamp">✎</button>
+      </div>
+    </div>
+  </div>${mkDropTarget(0, 'line-end-target')}</div>`;
+}
+
+function elementFromMarkup(markup) {
+  const wrapper = document.createElement('div');
+  wrapper.innerHTML = markup;
+  return wrapper.firstElementChild;
+}
+
+function updatePoolEmptyState() {
+  const grid = document.getElementById('poolGrid');
+  const empty = grid.querySelector('.pool-empty');
+  if (!unplaced.length && !empty) {
+    grid.innerHTML = '<div class="pool-empty" style="color:#4a4a58;font-size:12px;padding:6px;grid-column:1/-1">All photos placed ✓</div>';
+  } else if (unplaced.length) {
+    empty?.remove();
+  }
+}
+
+function removePoolCards(ids) {
+  ids.forEach(id => document.querySelector(`#poolGrid .pool-card[data-photo-id="${id}"]`)?.remove());
+  updatePoolEmptyState();
+}
+
+function insertPoolCards(ids) {
+  const inserted = new Set(ids.map(String));
+  const grid = document.getElementById('poolGrid');
+  updatePoolEmptyState();
+  unplaced.forEach((id, index) => {
+    if (!inserted.has(String(id))) return;
+    const nextExistingId = unplaced.slice(index + 1)
+      .find(nextId => grid.querySelector(`.pool-card[data-photo-id="${nextId}"]`));
+    const nextCard = nextExistingId
+      ? grid.querySelector(`.pool-card[data-photo-id="${nextExistingId}"]`) : null;
+    grid.insertBefore(elementFromMarkup(poolCardMarkup(id)), nextCard);
+  });
+}
+
+function removeTimelineEntries(ids) {
+  ids.forEach(id => document.querySelector(`#timelineList .photo-card[data-photo-id="${id}"]`)?.closest('.timeline-entry')?.remove());
+}
+
+function insertTimelineEntries(ids) {
+  const inserted = new Set(ids.map(String));
+  const list = document.getElementById('timelineList');
+  if (!list.querySelector('.timeline-entry')) list.innerHTML = '';
+  timeline.forEach((id, index) => {
+    if (!inserted.has(String(id))) return;
+    const nextExistingId = timeline.slice(index + 1)
+      .find(nextId => list.querySelector(`.photo-card[data-photo-id="${nextId}"]`));
+    const nextEntry = nextExistingId
+      ? list.querySelector(`.photo-card[data-photo-id="${nextExistingId}"]`)?.closest('.timeline-entry') : null;
+    list.insertBefore(elementFromMarkup(timelineEntryMarkup(id)), nextEntry);
+  });
+}
+
+function finalizeIncrementalTransfer(refreshIds = timeline, animateIds = null) {
+  if (!timeline.length) {
+    const list = document.getElementById('timelineList');
+    list.innerHTML = `<div class="empty-state">
+      <h2>Drag photos here</h2>
+      <p>Drag photos from the left panel into this timeline.<br>Set at least two timestamps to enable interpolation.</p>
+    </div>` + mkDropTarget(0);
+    updateMemoryStatus();
+    updateHistoryButtons();
+    updateStats();
+    document.getElementById('exportBtn').disabled = true;
+    scheduleSessionSave();
+    return;
+  }
+  refreshTimelineCards(refreshIds);
+  setTimeout(updateTimelineLineEnds, 0);
+  if (animateIds?.size) animateTimelineCards(new Map(), animateIds);
+  updateMemoryStatus();
+  updateHistoryButtons();
+  updateStats();
+  document.getElementById('exportBtn').disabled = false;
+  scheduleSessionSave();
+}
+
 function getAffectedTimelineIds(previousTimeline, nextTimeline, movedIds) {
   let start = Infinity;
   let end = -1;
@@ -1544,6 +1697,30 @@ function getTimelineDifferenceIds(previousTimeline, nextTimeline) {
   return new Set([
     ...previousTimeline.slice(start, end + 1),
     ...nextTimeline.slice(start, end + 1)
+  ]);
+}
+
+function isTimelineAnchor(id) {
+  const photo = photos[id];
+  return !!(photo?.timestamp && !photo._interpolated);
+}
+
+function getAnchorSpanIds(timelineIds, movedIds) {
+  const positions = timelineIds
+    .map((id, index) => movedIds.has(String(id)) ? index : -1)
+    .filter(index => index >= 0);
+  if (!positions.length) return new Set();
+  let start = Math.min(...positions);
+  let end = Math.max(...positions);
+  while (start > 0 && !isTimelineAnchor(timelineIds[start])) start--;
+  while (end < timelineIds.length - 1 && !isTimelineAnchor(timelineIds[end])) end++;
+  return new Set(timelineIds.slice(start, end + 1));
+}
+
+function getTransferAffectedIds(previousTimeline, nextTimeline, movedIds) {
+  return new Set([
+    ...getAnchorSpanIds(previousTimeline, movedIds),
+    ...getAnchorSpanIds(nextTimeline, movedIds)
   ]);
 }
 
@@ -1646,12 +1823,19 @@ function onDropTargetDrop(e, insertIdx) {
   const { source, ids } = dragState;
   if (!ids.length) return;
   const movedIds = new Set(ids);
+  const previousTimeline = [...timeline];
   pushHistory();
   if (source === 'pool') {
     const selected = new Set(ids);
     unplaced = unplaced.filter(x => !selected.has(x));
     ids.forEach(id => { photos[id].inTimeline = true; });
     timeline.splice(insertIdx, 0, ...ids);
+    selectionAnchor = { source: 'timeline', id: ids[0] };
+    interpolateAll();
+    removePoolCards(ids);
+    insertTimelineEntries(ids);
+    finalizeIncrementalTransfer(getTransferAffectedIds(previousTimeline, timeline, movedIds), movedIds);
+    return;
   } else if (source === 'timeline') {
     const previousTimeline = [...timeline];
     const selected = new Set(ids);
@@ -1672,6 +1856,7 @@ function onDropTargetDrop(e, insertIdx) {
 
 function removeFromTimeline(id) {
   id = String(id);
+  const previousTimeline = [...timeline];
   pushHistory();
   timeline = timeline.filter(x => x !== id);
   photos[id].inTimeline = false;
@@ -1679,7 +1864,9 @@ function removeFromTimeline(id) {
   unplaced.push(id);
   sortUnplacedByName();
   interpolateAll();
-  render({ animateIds: new Set([id]) });
+  removeTimelineEntries([id]);
+  insertPoolCards([id]);
+  finalizeIncrementalTransfer(getTransferAffectedIds(previousTimeline, timeline, new Set([id])));
 }
 
 function openTimestampModal(id) {
@@ -1943,7 +2130,7 @@ function render(options = {}) {
     if (sortSelect) sortSelect.value = unplacedSortMode;
     const grid = document.getElementById('poolGrid');
     if (!unplaced.length) {
-      grid.innerHTML = '<div style="color:#4a4a58;font-size:12px;padding:6px;grid-column:1/-1">All photos placed ✓</div>';
+      grid.innerHTML = '<div class="pool-empty" style="color:#4a4a58;font-size:12px;padding:6px;grid-column:1/-1">All photos placed ✓</div>';
     } else {
       grid.innerHTML = unplaced.map(id => {
         const p = photos[id];
