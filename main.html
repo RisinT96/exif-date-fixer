@@ -403,6 +403,30 @@
   .pool-thumb img { width: 100%; height: 100%; object-fit: cover; }
   .pool-name { font-size: 11px; color: #8a8690; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
+  .context-menu {
+    position: fixed;
+    z-index: 20;
+    min-width: 120px;
+    padding: 4px;
+    border: 1px solid #3a3a48;
+    border-radius: 6px;
+    background: #1e1e28;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+  }
+  .context-menu button {
+    width: 100%;
+    padding: 7px 9px;
+    border: 0;
+    border-radius: 4px;
+    background: transparent;
+    color: #e05a5a;
+    text-align: left;
+    font: inherit;
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .context-menu button:hover { background: #2a1515; }
+
   .empty-state {
     text-align: center;
     padding: 60px 20px;
@@ -533,6 +557,10 @@
       <button class="btn btn-primary" onclick="confirmTimestamp()">Set Anchor</button>
     </div>
   </div>
+</div>
+
+<div class="context-menu" id="cardContextMenu" style="display:none">
+  <button type="button" onclick="removeSelectedFromTimeline()">Remove</button>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/exifreader@4.16.0/dist/exif-reader.min.js"></script>
@@ -1012,6 +1040,46 @@ function selectedIdsInSource(source) {
   return ids.filter(id => selectedIds.has(id));
 }
 
+function hideCardContextMenu() {
+  document.getElementById('cardContextMenu').style.display = 'none';
+}
+
+function openCardContextMenu(e, id, source) {
+  if (source !== 'timeline') return;
+  e.preventDefault();
+  id = String(id);
+  if (!selectedIds.has(id) || selectionAnchor?.source !== source) {
+    selectedIds.clear();
+    selectedIds.add(id);
+    selectionAnchor = { source, id };
+    render();
+  }
+
+  const menu = document.getElementById('cardContextMenu');
+  menu.style.display = 'block';
+  menu.style.left = `${Math.min(e.clientX, window.innerWidth - menu.offsetWidth - 8)}px`;
+  menu.style.top = `${Math.min(e.clientY, window.innerHeight - menu.offsetHeight - 8)}px`;
+}
+
+function removeSelectedFromTimeline() {
+  hideCardContextMenu();
+  const ids = selectedIdsInSource('timeline');
+  if (!ids.length) return;
+
+  const selected = new Set(ids);
+  timeline = timeline.filter(id => !selected.has(id));
+  for (const id of ids) {
+    photos[id].inTimeline = false;
+    photos[id]._interpolated = null;
+    unplaced.push(id);
+  }
+  sortUnplacedByName();
+  selectedIds.clear();
+  selectionAnchor = null;
+  interpolateAll();
+  render();
+}
+
 function onCardDragStart(e, id, source) {
   id = String(id);
   if (!selectedIds.has(id) || selectionAnchor?.source !== source) {
@@ -1242,6 +1310,7 @@ function render() {
       ? `<span class="photo-badge badge-cam2">976A</span>` : '';
     html += `<div class="photo-card ${cardClass}${selectedClass}" data-photo-id="${id}" draggable="true"
       onclick="handleCardClick(event,${id},'timeline')"
+      oncontextmenu="openCardContextMenu(event,${id},'timeline')"
       ondragstart="onCardDragStart(event,${id},'timeline')"
       ondragend="onCardDragEnd(event)">
       <div class="photo-thumb">${p.thumbURL ? `<img src="${p.thumbURL}">` : '🖼'}</div>
@@ -1275,6 +1344,11 @@ function mkDropTarget(idx) {
 }
 
 // Initial setup
+document.addEventListener('click', hideCardContextMenu);
+document.addEventListener('scroll', hideCardContextMenu, true);
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') hideCardContextMenu();
+});
 document.getElementById('fileInput').addEventListener('change', async function() {
   await handleFiles(this.files);
   this.value = ''; // release the picker references after processing the batch
