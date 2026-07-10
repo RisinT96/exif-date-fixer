@@ -515,6 +515,8 @@
     <span class="session-status" id="sessionStatus">Loading session…</span>
     <button class="btn btn-ghost" id="undoBtn" onclick="undoLastChange()" disabled title="Undo (Ctrl/Cmd+Z)">Undo</button>
     <button class="btn btn-ghost" id="redoBtn" onclick="redoLastChange()" disabled title="Redo (Ctrl/Cmd+Shift+Z)">Redo</button>
+    <button class="btn btn-ghost" onclick="exportSessionFile()">Export Session</button>
+    <button class="btn btn-ghost" onclick="document.getElementById('sessionFileInput').click()">Import Session</button>
     <button class="btn btn-ghost" onclick="saveSessionNow()">Save</button>
     <button class="btn btn-ghost" onclick="clearAll()">Clear</button>
     <button class="btn btn-primary" id="exportBtn" disabled onclick="exportCSV()">Export CSV</button>
@@ -531,6 +533,7 @@
         <div style="font-size:11px;margin-top:4px;">JPG, PNG, HEIC, etc.</div>
       </div>
       <input type="file" id="fileInput" multiple accept="image/*" style="display:none">
+      <input type="file" id="sessionFileInput" accept="application/json,.json" style="display:none">
       <div class="processing-status" id="processingStatus" aria-live="polite">
         <div id="processingLabel">Processing images…</div>
         <div class="progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
@@ -1341,6 +1344,38 @@ function exportCSV() {
   a.click();
 }
 
+function exportSessionFile() {
+  const state = buildSessionState();
+  const blob = new Blob([JSON.stringify(state)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'photo_timestamp_editor_session.json';
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
+async function importSessionFile(file) {
+  try {
+    const state = JSON.parse(await file.text());
+    if (!state || typeof state !== 'object' || !state.photos || typeof state.photos !== 'object') {
+      throw new Error('This is not a valid Photo Timestamp Editor session.');
+    }
+    const importedPhotoCount = Object.keys(state.photos).length;
+    if (!importedPhotoCount) {
+      throw new Error('This session does not contain any photos.');
+    }
+    pushHistory();
+    restoreSessionState(state);
+    render();
+    await saveSessionNow();
+    setSessionStatus(`Session imported · ${importedPhotoCount} photos`, 'good');
+  } catch (err) {
+    console.error('Could not import session', err);
+    alert(`Could not import session: ${err.message}`);
+  }
+}
+
 function csvCell(value) {
   return `"${String(value).replace(/"/g, '""')}"`;
 }
@@ -1543,6 +1578,11 @@ window.addEventListener('resize', updateTimelineLineEnds);
 document.getElementById('fileInput').addEventListener('change', async function() {
   await handleFiles(this.files);
   this.value = ''; // release the picker references after processing the batch
+});
+document.getElementById('sessionFileInput').addEventListener('change', async function() {
+  const file = this.files[0];
+  if (file) await importSessionFile(file);
+  this.value = '';
 });
 
 async function initApp() {
