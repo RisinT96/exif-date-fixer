@@ -1,0 +1,1196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Photo Timestamp Editor</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    background: #1a1a1f;
+    color: #e0ddd8;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  header {
+    padding: 12px 20px;
+    background: #13131a;
+    border-bottom: 1px solid #2e2e3a;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-shrink: 0;
+  }
+
+  header h1 {
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    color: #c8c4be;
+  }
+
+  .header-actions {
+    display: flex;
+    gap: 8px;
+    margin-left: auto;
+    align-items: center;
+  }
+
+  .btn {
+    padding: 6px 14px;
+    border-radius: 6px;
+    border: none;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+
+  .btn-ghost {
+    background: transparent;
+    color: #8a8690;
+    border: 1px solid #2e2e3a;
+  }
+  .btn-ghost:hover { background: #22222c; color: #c8c4be; }
+
+  .btn-primary {
+    background: #5b6af0;
+    color: #fff;
+  }
+  .btn-primary:hover { background: #6b7aff; }
+  .btn-primary:disabled { background: #2e2e3a; color: #555; cursor: not-allowed; }
+
+  .session-status {
+    font-size: 11px;
+    color: #6a6670;
+    min-width: 118px;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+  .session-status.good { color: #4caf82; }
+  .session-status.warn { color: #c87a30; }
+  .session-status.bad { color: #e05a5a; }
+
+  .main {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+  }
+
+  /* ── LEFT PANEL ── */
+  .sidebar {
+    width: 260px;
+    background: #13131a;
+    border-right: 1px solid #2e2e3a;
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+    overflow: hidden;
+  }
+
+  .sidebar-section {
+    padding: 14px 16px;
+    border-bottom: 1px solid #2e2e3a;
+  }
+
+  .sidebar-section label {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    color: #6a6670;
+    text-transform: uppercase;
+    display: block;
+    margin-bottom: 8px;
+  }
+
+  .drop-zone {
+    border: 1.5px dashed #3a3a48;
+    border-radius: 8px;
+    padding: 20px 12px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.15s;
+    font-size: 13px;
+    color: #5a5a6a;
+  }
+  .drop-zone:hover, .drop-zone.dragover {
+    border-color: #5b6af0;
+    color: #8a90f0;
+    background: #1c1c28;
+  }
+  .drop-zone input { display: none; }
+
+  .stats {
+    font-size: 12px;
+    color: #6a6670;
+    line-height: 1.8;
+  }
+  .stats span { color: #c8c4be; font-weight: 500; }
+
+  .unplaced-pool {
+    flex: 1;
+    overflow-y: auto;
+    padding: 10px;
+  }
+
+  .unplaced-pool h3 {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    color: #6a6670;
+    text-transform: uppercase;
+    padding: 6px 6px 8px;
+  }
+
+  .pool-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+  }
+
+  /* ── TIMELINE ── */
+  .timeline-area {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .timeline-toolbar {
+    padding: 10px 16px;
+    background: #16161e;
+    border-bottom: 1px solid #2e2e3a;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-size: 13px;
+    color: #6a6670;
+    flex-shrink: 0;
+  }
+
+  .timeline-toolbar strong { color: #c8c4be; }
+
+  .timeline-scroll {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px;
+  }
+
+  .timeline-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 4px;
+    align-content: flex-start;
+    align-items: stretch;
+  }
+
+  .drop-target {
+    width: 12px;
+    min-height: 214px;
+    border-radius: 999px;
+    display: flex;
+    align-items: stretch;
+    justify-content: center;
+    color: transparent;
+    transition: width 0.16s ease, background 0.16s ease, opacity 0.16s ease;
+    cursor: default;
+    opacity: 0;
+    flex: 0 0 12px;
+    position: relative;
+  }
+  .drop-target::before {
+    content: '';
+    width: 2px;
+    border-radius: 999px;
+    background: transparent;
+    margin: 8px 0;
+    transition: width 0.16s ease, background 0.16s ease, box-shadow 0.16s ease;
+  }
+  .drop-target.active {
+    opacity: 1;
+  }
+  .drop-target.active::before {
+    background: #4a4a5a;
+  }
+  .drop-target.hover {
+    width: 24px;
+    flex-basis: 24px;
+    background: rgba(91,106,240,0.10);
+  }
+  .drop-target.hover::before {
+    width: 4px;
+    background: #8a90f0;
+    box-shadow: 0 0 14px rgba(138,144,240,0.65);
+  }
+
+  .photo-card {
+    display: flex;
+    flex-direction: column;
+    border-radius: 8px;
+    background: #1e1e28;
+    border: 1px solid #2a2a36;
+    cursor: grab;
+    user-select: none;
+    transition: border-color 0.12s, background 0.12s, box-shadow 0.18s, transform 0.18s ease;
+    position: relative;
+    overflow: hidden;
+    width: 160px;
+    flex: 0 0 160px;
+    will-change: transform;
+  }
+  .photo-card:hover { border-color: #3a3a50; background: #22222e; }
+  .photo-card.dragging { opacity: 0.4; cursor: grabbing; }
+  .photo-card.anchored { border-top: 3px solid #4caf82; }
+  .photo-card.interpolated { border-top: 3px solid #5b6af0; }
+  .photo-card.unplaced-card { border-top: 3px solid #6a4a20; }
+
+  .photo-thumb {
+    width: 100%;
+    height: 140px;
+    background: #2a2a36;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 36px;
+    color: #3a3a50;
+    overflow: hidden;
+    flex-shrink: 0;
+  }
+  .photo-thumb img { width: 100%; height: 100%; object-fit: cover; }
+
+  .photo-footer {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    padding: 6px 8px;
+    min-width: 0;
+  }
+
+  .photo-info { display: contents; }
+  .photo-name {
+    font-size: 11px;
+    font-weight: 500;
+    color: #c8c4be;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .photo-time {
+    font-size: 10px;
+    color: #6a6670;
+    font-variant-numeric: tabular-nums;
+  }
+  .photo-time.known { color: #4caf82; }
+  .photo-time.interpolated { color: #7b8af0; }
+
+  .photo-badge {
+    font-size: 10px;
+    padding: 2px 5px;
+    border-radius: 3px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    flex-shrink: 0;
+  }
+  .badge-anchor { background: #1a3328; color: #4caf82; }
+  .badge-interp { background: #1a1c3a; color: #5b6af0; }
+  .badge-cam1 { background: #2a1e10; color: #c87a30; }
+  .badge-cam2 { background: #1a2030; color: #4a90d0; }
+
+  .card-actions {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    margin-top: 1px;
+  }
+
+  .remove-btn {
+    background: none;
+    border: none;
+    color: #3a3a50;
+    cursor: pointer;
+    font-size: 15px;
+    line-height: 1;
+    padding: 2px 4px;
+    border-radius: 3px;
+    flex-shrink: 0;
+  }
+  .remove-btn:hover { color: #e05a5a; background: #2a1515; }
+
+  .pool-card {
+    padding: 6px 8px;
+    border-radius: 6px;
+    background: #1e1e28;
+    border: 1px solid #2a2a36;
+    cursor: grab;
+    user-select: none;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    transition: all 0.12s;
+  }
+  .pool-card:hover { border-color: #5b6af0; background: #22222e; }
+  .pool-card.dragging { opacity: 0.3; }
+  .pool-thumb {
+    width: 100%;
+    height: 48px;
+    border-radius: 3px;
+    background: #2a2a36;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 22px;
+    color: #3a3a50;
+    overflow: hidden;
+  }
+  .pool-thumb img { width: 100%; height: 100%; object-fit: cover; }
+  .pool-name { font-size: 11px; color: #8a8690; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  .empty-state {
+    text-align: center;
+    padding: 60px 20px;
+    color: #4a4a58;
+  }
+  .empty-state h2 { font-size: 18px; margin-bottom: 8px; color: #6a6a78; }
+  .empty-state p { font-size: 13px; line-height: 1.6; }
+
+  .legend {
+    display: flex;
+    gap: 14px;
+    font-size: 11px;
+    color: #6a6670;
+    align-items: center;
+  }
+  .legend-dot {
+    width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 4px;
+  }
+
+  ::-webkit-scrollbar { width: 5px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #2e2e3a; border-radius: 3px; }
+
+  .modal-overlay {
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.7);
+    display: flex; align-items: center; justify-content: center;
+    z-index: 100;
+  }
+  .modal {
+    background: #1e1e28;
+    border: 1px solid #2e2e3a;
+    border-radius: 10px;
+    padding: 24px;
+    width: 340px;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+  }
+  .modal h2 { font-size: 16px; margin-bottom: 6px; }
+  .modal p { font-size: 13px; color: #8a8690; margin-bottom: 16px; line-height: 1.5; }
+  .modal input[type="datetime-local"] {
+    width: 100%;
+    padding: 8px 10px;
+    background: #13131a;
+    border: 1px solid #3a3a48;
+    border-radius: 6px;
+    color: #e0ddd8;
+    font-size: 13px;
+    margin-bottom: 14px;
+    outline: none;
+  }
+  .modal input:focus { border-color: #5b6af0; }
+  .modal-actions { display: flex; gap: 8px; justify-content: flex-end; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>📷 Photo Timestamp Editor</h1>
+  <div class="header-actions">
+    <div class="legend">
+      <span><span class="legend-dot" style="background:#4caf82"></span>Anchored (has timestamp)</span>
+      <span><span class="legend-dot" style="background:#5b6af0"></span>Interpolated</span>
+      <span><span class="legend-dot" style="background:#c87a30"></span>Unplaced</span>
+    </div>
+    <span class="session-status" id="sessionStatus">Loading session…</span>
+    <button class="btn btn-ghost" onclick="saveSessionNow()">Save</button>
+    <button class="btn btn-ghost" onclick="clearAll()">Clear</button>
+    <button class="btn btn-primary" id="exportBtn" disabled onclick="exportCSV()">Export CSV</button>
+  </div>
+</header>
+
+<div class="main">
+  <div class="sidebar">
+    <div class="sidebar-section">
+      <label>Load Photos</label>
+      <div class="drop-zone" id="dropZone" onclick="document.getElementById('fileInput').click()"
+           ondragover="handleDragOver(event)" ondragleave="handleDragLeave(event)" ondrop="handleFileDrop(event)">
+        <div>📁 Click or drop photos here</div>
+        <div style="font-size:11px;margin-top:4px;">JPG, PNG, HEIC, etc.</div>
+      </div>
+      <input type="file" id="fileInput" multiple accept="image/*" style="display:none">
+    </div>
+
+    <div class="sidebar-section">
+      <label>Stats</label>
+      <div class="stats">
+        <div>Total: <span id="statTotal">0</span></div>
+        <div>Anchored: <span id="statAnchored">0</span></div>
+        <div>Interpolated: <span id="statInterp">0</span></div>
+        <div>Unplaced: <span id="statUnplaced">0</span></div>
+      </div>
+    </div>
+
+    <div class="unplaced-pool" id="unplacedPool">
+      <h3>Unplaced Photos</h3>
+      <div class="pool-grid" id="poolGrid"></div>
+    </div>
+  </div>
+
+  <div class="timeline-area">
+    <div class="timeline-toolbar">
+      <span>Drag photos onto the slim separators between images. Timestamps are <strong>interpolated automatically</strong> and your session is <strong>saved automatically</strong> in this browser.</span>
+    </div>
+    <div class="timeline-scroll">
+      <div class="timeline-list" id="timelineList"></div>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="tsModal" style="display:none">
+  <div class="modal">
+    <h2 id="modalTitle">Set Timestamp</h2>
+    <p id="modalDesc">Enter the capture time for this photo. It will act as an anchor for interpolation.</p>
+    <input type="datetime-local" id="modalInput" step="1">
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="confirmTimestamp()">Set Anchor</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// photos keyed by numeric id (string of integer)
+let photos = {};
+let nextId = 0;
+let timeline = [];   // ordered list of numeric id strings
+let unplaced = [];   // numeric id strings not yet in timeline
+let dragState = null;
+let modalTarget = null;
+
+const CAM1 = 'DSC';
+const CAM2 = '976A';
+
+const filenameCollator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
+
+function sortUnplacedByName() {
+  unplaced = unplaced
+    .filter(id => photos[id] && !timeline.includes(id))
+    .sort((a, b) => filenameCollator.compare(photos[a].name || '', photos[b].name || ''));
+}
+const SESSION_DB_NAME = 'photo-timestamp-editor-session';
+const SESSION_DB_VERSION = 1;
+const SESSION_STORE = 'state';
+const SESSION_KEY = 'current';
+let sessionReady = false;
+let saveTimer = null;
+
+function detectCamera(name) {
+  if (name.startsWith('DSC')) return CAM1;
+  if (name.startsWith('976A')) return CAM2;
+  return 'OTHER';
+}
+
+function dateToLocalStamp(d) {
+  if (!d) return null;
+  return `${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}.${String(d.getMilliseconds()).padStart(3, '0')}`;
+}
+
+function localStampToDate(value) {
+  if (!value) return null;
+  const m = String(value).match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?$/);
+  if (!m) return null;
+  return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), Number(m[4]), Number(m[5]), Number(m[6]), Number(String(m[7] || '0').padEnd(3, '0').slice(0, 3)));
+}
+
+function setSessionStatus(text, kind = '') {
+  const el = document.getElementById('sessionStatus');
+  if (!el) return;
+  el.textContent = text;
+  el.className = `session-status ${kind}`.trim();
+}
+
+function openSessionDb() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(SESSION_DB_NAME, SESSION_DB_VERSION);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(SESSION_STORE)) db.createObjectStore(SESSION_STORE);
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function withSessionStore(mode, action) {
+  const db = await openSessionDb();
+  try {
+    return await new Promise((resolve, reject) => {
+      const tx = db.transaction(SESSION_STORE, mode);
+      const store = tx.objectStore(SESSION_STORE);
+      const result = action(store);
+      tx.oncomplete = () => resolve(result?.result ?? result);
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error);
+    });
+  } finally {
+    db.close();
+  }
+}
+
+function buildSessionState() {
+  sortUnplacedByName();
+  const cleanPhotos = {};
+  for (const [id, p] of Object.entries(photos)) {
+    cleanPhotos[id] = {
+      id: p.id,
+      name: p.name,
+      camera: p.camera,
+      timestamp: dateToLocalStamp(p.timestamp),
+      thumbURL: p.thumbURL,
+      inTimeline: p.inTimeline
+    };
+  }
+  return {
+    version: 1,
+    savedAt: new Date().toISOString(),
+    nextId,
+    timeline: [...timeline],
+    unplaced: [...unplaced],
+    photos: cleanPhotos
+  };
+}
+
+function restoreSessionState(state) {
+  photos = {};
+  nextId = Number(state.nextId) || 0;
+  timeline = Array.isArray(state.timeline) ? state.timeline.map(String) : [];
+  unplaced = Array.isArray(state.unplaced) ? state.unplaced.map(String) : [];
+
+  for (const [id, p] of Object.entries(state.photos || {})) {
+    photos[id] = {
+      id: String(p.id ?? id),
+      name: p.name || `photo-${id}`,
+      camera: p.camera || detectCamera(p.name || ''),
+      timestamp: localStampToDate(p.timestamp),
+      thumbURL: p.thumbURL || null,
+      inTimeline: !!p.inTimeline,
+      _interpolated: null
+    };
+  }
+
+  timeline = timeline.filter(id => photos[id]);
+  unplaced = unplaced.filter(id => photos[id] && !timeline.includes(id));
+
+  for (const id of Object.keys(photos)) {
+    if (!timeline.includes(id) && !unplaced.includes(id)) {
+      if (photos[id].inTimeline) timeline.push(id);
+      else unplaced.push(id);
+    }
+    photos[id].inTimeline = timeline.includes(id);
+  }
+
+  const maxId = Object.keys(photos).reduce((max, id) => Math.max(max, Number(id) || 0), -1);
+  nextId = Math.max(nextId, maxId + 1);
+  sortUnplacedByName();
+  interpolateAll();
+}
+
+function scheduleSessionSave() {
+  if (!sessionReady) return;
+  clearTimeout(saveTimer);
+  setSessionStatus('Saving…');
+  saveTimer = setTimeout(saveSessionNow, 350);
+}
+
+async function saveSessionNow() {
+  if (!sessionReady) return;
+  clearTimeout(saveTimer);
+  try {
+    const state = buildSessionState();
+    await withSessionStore('readwrite', store => store.put(state, SESSION_KEY));
+    const count = Object.keys(photos).length;
+    setSessionStatus(count ? 'Session saved' : 'Empty session saved', 'good');
+  } catch (err) {
+    console.error('Could not save session', err);
+    setSessionStatus('Save failed', 'bad');
+    alert('Could not save this session. Your browser storage may be full, probably because of many thumbnail previews. Try exporting the CSV and clearing old browser data if needed.');
+  }
+}
+
+async function loadSession() {
+  try {
+    const state = await withSessionStore('readonly', store => store.get(SESSION_KEY));
+    if (state && state.photos) {
+      restoreSessionState(state);
+      setSessionStatus('Session restored', 'good');
+      return true;
+    }
+    setSessionStatus('No saved session', 'warn');
+    return false;
+  } catch (err) {
+    console.warn('Could not load session', err);
+    setSessionStatus('Session unavailable', 'bad');
+    return false;
+  }
+}
+
+async function deleteSavedSession() {
+  try {
+    await withSessionStore('readwrite', store => store.delete(SESSION_KEY));
+  } catch (err) {
+    console.warn('Could not delete saved session', err);
+  }
+}
+
+async function readExifDate(file) {
+  try {
+    // Read enough bytes to include normal JPEG/TIFF EXIF blocks without loading huge RAW files fully.
+    const buffer = await file.slice(0, 8 * 1024 * 1024).arrayBuffer();
+    return parseExifDate(buffer) || parseXmpDate(buffer) || null;
+  } catch (err) {
+    console.warn('Could not read EXIF for', file.name, err);
+    return null;
+  }
+}
+
+function parseExifDate(buffer) {
+  const bytes = new Uint8Array(buffer);
+  const view = new DataView(buffer);
+
+  // JPEG files: walk APP segments and parse only the APP1 segment that starts with "Exif\0\0".
+  if (bytes[0] === 0xFF && bytes[1] === 0xD8) {
+    let offset = 2;
+    while (offset + 4 < bytes.length) {
+      if (bytes[offset] !== 0xFF) { offset++; continue; }
+      const marker = bytes[offset + 1];
+      if (marker === 0xDA || marker === 0xD9) break; // start of image data / end of image
+      const segmentLength = view.getUint16(offset + 2, false);
+      const segmentStart = offset + 4;
+      const segmentEnd = offset + 2 + segmentLength;
+      if (marker === 0xE1 && segmentEnd <= bytes.length && startsWith(bytes, segmentStart, 'Exif\0\0')) {
+        return parseTiffDate(buffer, segmentStart + 6, segmentEnd);
+      }
+      offset = segmentEnd;
+    }
+    return null;
+  }
+
+  // TIFF files start directly with II/MM byte order markers.
+  if (startsWith(bytes, 0, 'II') || startsWith(bytes, 0, 'MM')) {
+    return parseTiffDate(buffer, 0, bytes.length);
+  }
+
+  return null;
+}
+
+function parseTiffDate(buffer, tiffStart, tiffEnd) {
+  const view = new DataView(buffer);
+  const little = getAscii(view, tiffStart, 2) === 'II';
+  const magic = view.getUint16(tiffStart + 2, little);
+  if (magic !== 42) return null;
+
+  const ifd0Offset = view.getUint32(tiffStart + 4, little);
+  const ifd0 = readIfd(view, tiffStart, tiffEnd, tiffStart + ifd0Offset, little);
+  if (!ifd0) return null;
+
+  let exif = {};
+  const exifPtr = ifd0[0x8769]?.numberValue;
+  if (Number.isFinite(exifPtr)) {
+    exif = readIfd(view, tiffStart, tiffEnd, tiffStart + exifPtr, little) || {};
+  }
+
+  // Correct EXIF priority: actual capture time first, then digitized time, then file-modified time.
+  const candidates = [
+    { date: exif[0x9003]?.text, offset: exif[0x9011]?.text, subsec: exif[0x9291]?.text }, // DateTimeOriginal
+    { date: exif[0x9004]?.text, offset: exif[0x9012]?.text, subsec: exif[0x9292]?.text }, // DateTimeDigitized
+    { date: ifd0[0x0132]?.text, offset: exif[0x9010]?.text, subsec: exif[0x9290]?.text }, // DateTime
+  ];
+
+  for (const c of candidates) {
+    const parsed = parseExifDateString(c.date, c.offset, c.subsec);
+    if (parsed) return parsed;
+  }
+  return null;
+}
+
+function readIfd(view, tiffStart, tiffEnd, ifdOffset, little) {
+  if (ifdOffset < tiffStart || ifdOffset + 2 > tiffEnd) return null;
+  const entryCount = view.getUint16(ifdOffset, little);
+  const entries = {};
+  const typeSizes = { 1:1, 2:1, 3:2, 4:4, 5:8, 7:1, 9:4, 10:8 };
+
+  for (let i = 0; i < entryCount; i++) {
+    const entry = ifdOffset + 2 + i * 12;
+    if (entry + 12 > tiffEnd) break;
+    const tag = view.getUint16(entry, little);
+    const type = view.getUint16(entry + 2, little);
+    const count = view.getUint32(entry + 4, little);
+    const size = typeSizes[type];
+    if (!size || count <= 0) continue;
+
+    const byteLength = count * size;
+    const valueOffset = byteLength <= 4 ? entry + 8 : tiffStart + view.getUint32(entry + 8, little);
+    if (valueOffset < tiffStart || valueOffset + byteLength > tiffEnd) continue;
+
+    const item = { type, count, valueOffset };
+    if (type === 2) item.text = getAscii(view, valueOffset, byteLength).replace(/\0+$/, '').trim();
+    if (type === 3) item.numberValue = view.getUint16(valueOffset, little);
+    if (type === 4) item.numberValue = view.getUint32(valueOffset, little);
+    entries[tag] = item;
+  }
+  return entries;
+}
+
+function parseExifDateString(value, offsetValue, subsecValue) {
+  if (!value) return null;
+  const m = String(value).trim().match(/^(\d{4}):(\d{2}):(\d{2})\s+(\d{2}):(\d{2}):(\d{2})$/);
+  if (!m) return null;
+  const [, y, mo, d, h, mi, s] = m.map(Number);
+  if (y < 1970 || y > 2100 || mo < 1 || mo > 12 || d < 1 || d > 31 || h > 23 || mi > 59 || s > 60) return null;
+
+  const subsec = String(subsecValue || '').match(/^(\d{1,3})/)?.[1] || '0';
+  const ms = Number(subsec.padEnd(3, '0').slice(0, 3));
+
+  // IMPORTANT: For this editor we preserve the camera's wall-clock capture time.
+  // EXIF DateTimeOriginal is normally stored as local camera time. Some files also
+  // include OffsetTimeOriginal, but converting through that offset can shift the
+  // displayed time by timezone/DST. Since the goal is to recover the visible
+  // "date taken" time, we intentionally ignore the offset here.
+  return new Date(y, mo - 1, d, h, mi, s, ms);
+}
+
+function parseXmpDate(buffer) {
+  // Fallback only: read XMP's explicit creation fields, not random date-like strings.
+  const text = new TextDecoder('utf-8', { fatal: false }).decode(new Uint8Array(buffer));
+  const patterns = [
+    /<(?:xmp:)?CreateDate>([^<]+)<\/(?:xmp:)?CreateDate>/i,
+    /<(?:photoshop:)?DateCreated>([^<]+)<\/(?:photoshop:)?DateCreated>/i,
+    /(?:xmp:CreateDate|photoshop:DateCreated)=["']([^"']+)["']/i,
+  ];
+  for (const pattern of patterns) {
+    const value = text.match(pattern)?.[1];
+    const parsed = parseIsoLikeDate(value);
+    if (parsed) return parsed;
+  }
+  return null;
+}
+
+function parseIsoLikeDate(value) {
+  if (!value) return null;
+  const cleaned = value.trim();
+
+  // Preserve the written wall-clock time even if the XMP value includes Z or +HH:MM.
+  // Using `new Date(cleaned)` would convert it into the computer's local timezone.
+  const m = cleaned.match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,3}))?)?/);
+  if (!m) return null;
+  const ms = Number(String(m[7] || '0').padEnd(3, '0').slice(0, 3));
+  return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), Number(m[4]), Number(m[5]), Number(m[6] || 0), ms);
+}
+
+function startsWith(bytes, offset, str) {
+  if (offset < 0 || offset + str.length > bytes.length) return false;
+  for (let i = 0; i < str.length; i++) if (bytes[offset + i] !== str.charCodeAt(i)) return false;
+  return true;
+}
+
+function getAscii(view, offset, length) {
+  let out = '';
+  for (let i = 0; i < length; i++) out += String.fromCharCode(view.getUint8(offset + i));
+  return out;
+}
+
+function pad2(n) { return String(n).padStart(2, '0'); }
+
+// Generate a small thumbnail data URL (~160×120) and immediately free the blob
+function makeThumbnail(file) {
+  return new Promise(resolve => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      const MAX = 240;
+      const scale = Math.min(MAX / img.width, MAX / img.height, 1);
+      const w = Math.round(img.width * scale);
+      const h = Math.round(img.height * scale);
+      const canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
+      canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+      URL.revokeObjectURL(url); // free the full file immediately
+      resolve(canvas.toDataURL('image/jpeg', 0.7));
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); resolve(null); };
+    img.src = url;
+  });
+}
+
+async function handleFiles(files) {
+  const arr = Array.from(files).filter(f =>
+    f.type.startsWith('image/') || f.name.match(/\.(jpg|jpeg|png|heic|heif|tiff|raw|cr2|nef)$/i)
+  );
+  if (!arr.length) return;
+
+  const existingNames = new Set(Object.values(photos).map(p => p.name));
+
+  for (const file of arr) {
+    if (existingNames.has(file.name)) continue;
+    const id = String(nextId++);
+    const [timestamp, thumbURL] = await Promise.all([readExifDate(file), makeThumbnail(file)]);
+    const camera = detectCamera(file.name);
+    photos[id] = { id, name: file.name, camera, timestamp, thumbURL, inTimeline: false, _interpolated: null };
+    if (timestamp) {
+      timeline.push(id);
+      photos[id].inTimeline = true;
+    } else {
+      unplaced.push(id);
+    }
+    existingNames.add(file.name);
+  }
+
+  timeline.sort((a, b) => {
+    const ta = photos[a].timestamp, tb = photos[b].timestamp;
+    if (ta && tb) return ta - tb;
+    return 0;
+  });
+
+  sortUnplacedByName();
+  interpolateAll();
+  render();
+}
+
+function handleDragOver(e) { e.preventDefault(); e.currentTarget.classList.add('dragover'); }
+function handleDragLeave(e) { e.currentTarget.classList.remove('dragover'); }
+function handleFileDrop(e) {
+  e.preventDefault();
+  e.currentTarget.classList.remove('dragover');
+  handleFiles(e.dataTransfer.files);
+}
+
+function interpolateAll() {
+  for (let i = 0; i < timeline.length; i++) {
+    const p = photos[timeline[i]];
+    if (p.timestamp && !p._interpolated) { p._interpolated = null; continue; }
+
+    let prevIdx = -1, nextIdx = -1;
+    for (let j = i - 1; j >= 0; j--) {
+      if (photos[timeline[j]].timestamp && !photos[timeline[j]]._interpolated) { prevIdx = j; break; }
+    }
+    for (let j = i + 1; j < timeline.length; j++) {
+      if (photos[timeline[j]].timestamp && !photos[timeline[j]]._interpolated) { nextIdx = j; break; }
+    }
+
+    if (prevIdx >= 0 && nextIdx >= 0) {
+      const t0 = photos[timeline[prevIdx]].timestamp.getTime();
+      const t1 = photos[timeline[nextIdx]].timestamp.getTime();
+      const frac = (i - prevIdx) / (nextIdx - prevIdx);
+      p._interpolated = new Date(t0 + frac * (t1 - t0));
+    } else if (prevIdx >= 0) {
+      const anchor = photos[timeline[prevIdx]];
+      const gap = estimateGap();
+      p._interpolated = new Date(anchor.timestamp.getTime() + (i - prevIdx) * gap);
+    } else if (nextIdx >= 0) {
+      const anchor = photos[timeline[nextIdx]];
+      const gap = estimateGap();
+      p._interpolated = new Date(anchor.timestamp.getTime() - (nextIdx - i) * gap);
+    } else {
+      p._interpolated = null;
+    }
+  }
+}
+
+function estimateGap() {
+  const anchors = timeline.filter(id => photos[id].timestamp && !photos[id]._interpolated);
+  if (anchors.length < 2) return 30000;
+  let total = 0;
+  for (let i = 1; i < anchors.length; i++) {
+    const idxA = timeline.indexOf(anchors[i-1]);
+    const idxB = timeline.indexOf(anchors[i]);
+    const dtA = photos[anchors[i-1]].timestamp.getTime();
+    const dtB = photos[anchors[i]].timestamp.getTime();
+    total += (dtB - dtA) / (idxB - idxA);
+  }
+  return total / (anchors.length - 1);
+}
+
+function getDisplayTime(p) {
+  if (p.timestamp && !p._interpolated) return { time: p.timestamp, kind: 'anchor' };
+  if (p._interpolated) return { time: p._interpolated, kind: 'interp' };
+  return null;
+}
+
+function fmtTime(d) {
+  if (!d) return '—';
+  return d.toLocaleString('en-GB', { dateStyle: 'short', timeStyle: 'medium' });
+}
+
+function onCardDragStart(e, id, source) {
+  dragState = { source, id: String(id) };
+  e.dataTransfer.effectAllowed = 'move';
+  setTimeout(() => {
+    document.querySelectorAll('.drop-target').forEach(el => el.classList.add('active'));
+  }, 0);
+  e.currentTarget.classList.add('dragging');
+}
+
+function onCardDragEnd(e) {
+  dragState = null;
+  document.querySelectorAll('.drop-target').forEach(el => el.classList.remove('active', 'hover'));
+  document.querySelectorAll('.dragging').forEach(el => el.classList.remove('dragging'));
+}
+
+function onDropTargetEnter(e) { if (dragState) e.currentTarget.classList.add('hover'); }
+function onDropTargetLeave(e) { e.currentTarget.classList.remove('hover'); }
+
+function onDropTargetDrop(e, insertIdx) {
+  e.preventDefault();
+  if (!dragState) return;
+  const { source, id } = dragState;
+  if (source === 'pool') {
+    unplaced = unplaced.filter(x => x !== id);
+    photos[id].inTimeline = true;
+    timeline.splice(insertIdx, 0, id);
+  } else if (source === 'timeline') {
+    const fromIdx = timeline.indexOf(id);
+    if (fromIdx < 0) return;
+    timeline.splice(fromIdx, 1);
+    const newIdx = fromIdx < insertIdx ? insertIdx - 1 : insertIdx;
+    timeline.splice(newIdx, 0, id);
+  }
+  interpolateAll();
+  render();
+}
+
+function removeFromTimeline(id) {
+  id = String(id);
+  timeline = timeline.filter(x => x !== id);
+  photos[id].inTimeline = false;
+  photos[id]._interpolated = null;
+  unplaced.push(id);
+  sortUnplacedByName();
+  interpolateAll();
+  render();
+}
+
+function openTimestampModal(id) {
+  id = String(id);
+  modalTarget = id;
+  const p = photos[id];
+  document.getElementById('modalTitle').textContent = `Set timestamp — ${p.name}`;
+  document.getElementById('modalDesc').textContent = `Enter the exact capture time. This photo will become an anchor for interpolation.`;
+  const existing = p.timestamp;
+  if (existing) {
+    const local = new Date(existing.getTime() - existing.getTimezoneOffset() * 60000);
+    document.getElementById('modalInput').value = local.toISOString().slice(0, 19);
+  } else {
+    document.getElementById('modalInput').value = '';
+  }
+  document.getElementById('tsModal').style.display = 'flex';
+}
+
+function closeModal() {
+  document.getElementById('tsModal').style.display = 'none';
+  modalTarget = null;
+}
+
+function confirmTimestamp() {
+  const val = document.getElementById('modalInput').value;
+  if (!val || !modalTarget) { closeModal(); return; }
+  photos[modalTarget].timestamp = new Date(val);
+  photos[modalTarget]._interpolated = null;
+  interpolateAll();
+  render();
+  closeModal();
+}
+
+function exportCSV() {
+  const rows = ['filename,timestamp'];
+  const all = [...timeline, ...unplaced];
+  for (const id of all) {
+    const p = photos[id];
+    const dt = getDisplayTime(p);
+    if (dt) {
+      const d = dt.time;
+      const pad = n => String(n).padStart(2, '0');
+      const ts = `${d.getFullYear()}:${pad(d.getMonth()+1)}:${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+      rows.push(`${csvCell(p.name)},${csvCell(ts)}`);
+    }
+  }
+  const blob = new Blob([rows.join('\n')], { type: 'text/csv' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'photo_timestamps.csv';
+  a.click();
+}
+
+function csvCell(value) {
+  return `"${String(value).replace(/"/g, '""')}"`;
+}
+
+async function clearAll() {
+  if (!Object.keys(photos).length) return;
+  if (!confirm('Clear all photos and delete the saved session?')) return;
+  photos = {}; nextId = 0; timeline = []; unplaced = [];
+  await deleteSavedSession();
+  setSessionStatus('Session cleared', 'warn');
+  render();
+}
+
+function getTimelineCardRects() {
+  const rects = new Map();
+  document.querySelectorAll('#timelineList .photo-card[data-photo-id]').forEach(el => {
+    rects.set(el.dataset.photoId, el.getBoundingClientRect());
+  });
+  return rects;
+}
+
+function animateTimelineCards(oldRects) {
+  if (!oldRects || !oldRects.size) return;
+  requestAnimationFrame(() => {
+    document.querySelectorAll('#timelineList .photo-card[data-photo-id]').forEach(el => {
+      const oldRect = oldRects.get(el.dataset.photoId);
+      if (!oldRect) {
+        el.animate([
+          { opacity: 0, transform: 'scale(0.96)' },
+          { opacity: 1, transform: 'scale(1)' }
+        ], { duration: 160, easing: 'ease-out' });
+        return;
+      }
+      const newRect = el.getBoundingClientRect();
+      const dx = oldRect.left - newRect.left;
+      const dy = oldRect.top - newRect.top;
+      if (Math.abs(dx) < 1 && Math.abs(dy) < 1) return;
+      el.animate([
+        { transform: `translate(${dx}px, ${dy}px)` },
+        { transform: 'translate(0, 0)' }
+      ], { duration: 220, easing: 'cubic-bezier(.2, .8, .2, 1)' });
+    });
+  });
+}
+
+function render() {
+  const oldTimelineRects = getTimelineCardRects();
+  // Stats
+  const total = Object.keys(photos).length;
+  const anchored = Object.values(photos).filter(p => p.timestamp && !p._interpolated).length;
+  const interp = Object.values(photos).filter(p => p._interpolated).length;
+  document.getElementById('statTotal').textContent = total;
+  document.getElementById('statAnchored').textContent = anchored;
+  document.getElementById('statInterp').textContent = interp;
+  document.getElementById('statUnplaced').textContent = unplaced.length;
+
+  // Pool
+  sortUnplacedByName();
+  const grid = document.getElementById('poolGrid');
+  if (!unplaced.length) {
+    grid.innerHTML = '<div style="color:#4a4a58;font-size:12px;padding:6px;grid-column:1/-1">All photos placed ✓</div>';
+  } else {
+    grid.innerHTML = unplaced.map(id => {
+      const p = photos[id];
+      return `<div class="pool-card" draggable="true"
+        ondragstart="onCardDragStart(event,${id},'pool')"
+        ondragend="onCardDragEnd(event)"
+        title="${p.name.replace(/"/g,'&quot;')}">
+        <div class="pool-thumb">${p.thumbURL ? `<img src="${p.thumbURL}">` : '🖼'}</div>
+        <div class="pool-name">${p.name}</div>
+      </div>`;
+    }).join('');
+  }
+
+  // Timeline
+  const list = document.getElementById('timelineList');
+  if (!timeline.length && !unplaced.length) {
+    list.innerHTML = `<div class="empty-state">
+      <h2>Timeline is empty</h2>
+      <p>Load photos using the panel on the left.<br>Photos with existing timestamps appear here automatically as anchors.</p>
+    </div>`;
+    document.getElementById('exportBtn').disabled = true;
+    scheduleSessionSave();
+    return;
+  }
+
+  if (!timeline.length) {
+    list.innerHTML = `<div class="empty-state">
+      <h2>Drag photos here</h2>
+      <p>Drag photos from the left panel into this timeline.<br>Set at least two timestamps to enable interpolation.</p>
+    </div>` + mkDropTarget(0);
+    document.getElementById('exportBtn').disabled = true;
+    scheduleSessionSave();
+    return;
+  }
+
+  let html = mkDropTarget(0);
+  timeline.forEach((id, i) => {
+    const p = photos[id];
+    const dt = getDisplayTime(p);
+    const isAnchor = p.timestamp && !p._interpolated;
+    const isInterp = !!p._interpolated;
+    const cardClass = isAnchor ? 'anchored' : isInterp ? 'interpolated' : 'unplaced-card';
+    const timeClass = isAnchor ? 'known' : isInterp ? 'interpolated' : '';
+    const timeStr = dt ? fmtTime(dt.time) : 'No timestamp';
+    const badge = isAnchor
+      ? `<span class="photo-badge badge-anchor">ANCHOR</span>`
+      : isInterp ? `<span class="photo-badge badge-interp">~</span>` : '';
+    const camBadge = p.camera === CAM1
+      ? `<span class="photo-badge badge-cam1">DSC</span>`
+      : p.camera === CAM2
+      ? `<span class="photo-badge badge-cam2">976A</span>` : '';
+    html += `<div class="photo-card ${cardClass}" data-photo-id="${id}" draggable="true"
+      ondragstart="onCardDragStart(event,${id},'timeline')"
+      ondragend="onCardDragEnd(event)">
+      <div class="photo-thumb">${p.thumbURL ? `<img src="${p.thumbURL}">` : '🖼'}</div>
+      <div class="photo-footer">
+        <div class="photo-name">${p.name}</div>
+        <div class="photo-time ${timeClass}">${timeStr}</div>
+        <div class="card-actions">
+          ${camBadge}
+          ${badge}
+          <div style="flex:1"></div>
+          <button class="remove-btn" onclick="removeFromTimeline(${id})" title="Remove">×</button>
+          <button class="btn btn-ghost" style="font-size:10px;padding:2px 5px;flex-shrink:0" onclick="openTimestampModal(${id})" title="Set timestamp">✎</button>
+        </div>
+      </div>
+    </div>` + mkDropTarget(i + 1);
+  });
+
+  list.innerHTML = html;
+  document.getElementById('exportBtn').disabled = false;
+  animateTimelineCards(oldTimelineRects);
+  scheduleSessionSave();
+}
+
+function mkDropTarget(idx) {
+  return `<div class="drop-target"
+    ondragover="event.preventDefault(); onDropTargetEnter(event)"
+    ondragleave="onDropTargetLeave(event)"
+    ondrop="onDropTargetDrop(event,${idx})"
+    title="Drop here"
+    aria-label="Drop photo here"></div>`;
+}
+
+// Initial setup
+document.getElementById('fileInput').addEventListener('change', function() {
+  handleFiles(this.files);
+  this.value = ''; // reset so same files can be re-added if needed
+});
+
+async function initApp() {
+  await loadSession();
+  sessionReady = true;
+  render();
+}
+
+initApp();
+</script>
+</body>
+</html>
