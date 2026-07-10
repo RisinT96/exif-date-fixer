@@ -985,6 +985,8 @@ async function handleFiles(files) {
     const file = files[i];
     if (!(file.type.startsWith('image/') || file.name.match(/\.(jpg|jpeg|png|webp|avif|heic|heif|tiff|tif|raw|crw|cr2|dng|dcr|nef|arw|raf|orf|rw2)$/i))) continue;
     if (existingNames.has(file.name)) {
+      const path = file.webkitRelativePath || file.name;
+      processingState.errors.push(`Duplicate filename skipped: ${path}`);
       processingState.processed++;
       updateProcessingProgress();
       continue;
