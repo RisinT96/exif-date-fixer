@@ -749,6 +749,7 @@ let processingState = null;
 let estimatedAppBytes = 0;
 const historyPast = [];
 const historyFuture = [];
+const historyPhotoRegistry = new Map();
 const MAX_HISTORY = 100;
 
 function updateProcessingProgress() {
@@ -818,45 +819,107 @@ function recalculateEstimatedAppBytes() {
     .reduce((total, photo) => total + estimatePhotoBytes(photo), 0);
 }
 
+function updateStats() {
+  const allPhotos = Object.values(photos);
+  document.getElementById('statTotal').textContent = allPhotos.length;
+  document.getElementById('statAnchored').textContent = allPhotos
+    .filter(photo => photo.timestamp && !photo._interpolated).length;
+  document.getElementById('statInterp').textContent = allPhotos
+    .filter(photo => photo._interpolated).length;
+  document.getElementById('statUnplaced').textContent = unplaced.length;
+}
+
+function arraysEqual(a, b) {
+  return a.length === b.length && a.every((value, index) => value === b[index]);
+}
+
+function sameIdSet(a, b) {
+  if (a.length !== b.length) return false;
+  const ids = new Set(b);
+  return ids.size === a.length && a.every(id => ids.has(id));
+}
+
+function datesEqual(a, b) {
+  return (!a && !b) || (a && b && a.getTime() === b.getTime());
+}
+
 function captureEditorState() {
+  const photoIds = Object.keys(photos);
   const photoState = {};
-  for (const [id, photo] of Object.entries(photos)) {
-    const { sourceFile, ...persistablePhoto } = photo;
+  for (const id of photoIds) {
+    const photo = photos[id];
+    if (!historyPhotoRegistry.has(id)) {
+      historyPhotoRegistry.set(id, {
+        id: photo.id,
+        name: photo.name,
+        camera: photo.camera,
+        modifiedTime: photo.modifiedTime || 0,
+        sourceSize: photo.sourceSize ?? null,
+        sourceFingerprint: photo.sourceFingerprint || null,
+        thumbURL: photo.thumbURL || null
+      });
+    }
     photoState[id] = {
-      ...persistablePhoto,
       timestamp: photo.timestamp ? new Date(photo.timestamp.getTime()) : null,
+      timestampSource: photo.timestampSource || null,
+      inTimeline: !!photo.inTimeline,
       _interpolated: photo._interpolated ? new Date(photo._interpolated.getTime()) : null
     };
   }
-  return { photos: photoState, nextId, timeline: [...timeline], unplaced: [...unplaced] };
-}
-
-function pushHistory() {
-  historyPast.push(captureEditorState());
-  if (historyPast.length > MAX_HISTORY) historyPast.shift();
-  historyFuture.length = 0;
-  updateHistoryButtons();
+  return { photoIds, photoState, nextId, timeline: [...timeline], unplaced: [...unplaced] };
 }
 
 function restoreEditorState(state) {
   const runtimeSources = photos;
-  photos = state.photos;
-  for (const [id, photo] of Object.entries(photos)) {
+  const previousPhotos = photos;
+  const previousTimeline = timeline;
+  const previousUnplaced = unplaced;
+  photos = {};
+  for (const id of state.photoIds) {
+    const base = historyPhotoRegistry.get(id);
+    const mutable = state.photoState[id];
+    if (!base || !mutable) continue;
+    photos[id] = {
+      ...base,
+      ...mutable
+    };
     const sourceFile = runtimeSources[id]?.sourceFile;
-    if (sourceFile) photo.sourceFile = sourceFile;
+    if (sourceFile) photos[id].sourceFile = sourceFile;
   }
   nextId = state.nextId;
-  timeline = state.timeline;
-  unplaced = state.unplaced;
+  timeline = [...state.timeline];
+  unplaced = [...state.unplaced];
   recalculateEstimatedAppBytes();
   selectedIds.clear();
   selectionAnchor = null;
-  render();
-}
 
-function updateSelectionUI() {
-  document.querySelectorAll('#timelineList .photo-card[data-photo-id], #poolGrid .pool-card[data-photo-id]')
-    .forEach(card => card.classList.toggle('selected', selectedIds.has(card.dataset.photoId)));
+  const samePhotos = sameIdSet(Object.keys(previousPhotos), state.photoIds);
+  const sameTimelineMembers = sameIdSet(previousTimeline, timeline);
+  const samePoolOrder = arraysEqual(previousUnplaced, unplaced);
+  if (samePhotos && sameTimelineMembers && samePoolOrder) {
+    const orderChanged = !arraysEqual(previousTimeline, timeline);
+    if (orderChanged) {
+      const affectedIds = getTimelineDifferenceIds(previousTimeline, timeline);
+      reorderTimelineDom(affectedIds);
+      return;
+    }
+
+    const changedIds = new Set(timeline.filter(id => {
+      const before = previousPhotos[id];
+      const after = photos[id];
+      return !before || !after
+        || !datesEqual(before.timestamp, after.timestamp)
+        || before.timestampSource !== after.timestampSource
+        || !datesEqual(before._interpolated, after._interpolated);
+    }));
+    changedIds.forEach(refreshTimelineCardDisplay);
+    updateMemoryStatus();
+    updateStats();
+    updateHistoryButtons();
+    scheduleSessionSave();
+    return;
+  }
+  render();
 }
 
 function updateHistoryButtons() {
@@ -878,6 +941,18 @@ function redoLastChange() {
   historyPast.push(captureEditorState());
   restoreEditorState(historyFuture.pop());
   updateHistoryButtons();
+}
+
+function pushHistory() {
+  historyPast.push(captureEditorState());
+  if (historyPast.length > MAX_HISTORY) historyPast.shift();
+  historyFuture.length = 0;
+  updateHistoryButtons();
+}
+
+function updateSelectionUI() {
+  document.querySelectorAll('#timelineList .photo-card[data-photo-id], #poolGrid .pool-card[data-photo-id]')
+    .forEach(card => card.classList.toggle('selected', selectedIds.has(card.dataset.photoId)));
 }
 
 function detectCamera(name) {
@@ -1460,6 +1535,18 @@ function getAffectedTimelineIds(previousTimeline, nextTimeline, movedIds) {
   ]);
 }
 
+function getTimelineDifferenceIds(previousTimeline, nextTimeline) {
+  let start = 0;
+  while (start < previousTimeline.length && previousTimeline[start] === nextTimeline[start]) start++;
+  let end = previousTimeline.length - 1;
+  while (end >= start && previousTimeline[end] === nextTimeline[end]) end--;
+  if (end < start) return new Set();
+  return new Set([
+    ...previousTimeline.slice(start, end + 1),
+    ...nextTimeline.slice(start, end + 1)
+  ]);
+}
+
 function reorderTimelineDom(affectedIds, animateIds = affectedIds) {
   const list = document.getElementById('timelineList');
   const entriesById = new Map();
@@ -1484,8 +1571,7 @@ function reorderTimelineDom(affectedIds, animateIds = affectedIds) {
   animateTimelineCards(oldRects, animateIds);
   updateMemoryStatus();
   updateHistoryButtons();
-  document.getElementById('statInterp').textContent = Object.values(photos)
-    .filter(photo => photo._interpolated).length;
+  updateStats();
   scheduleSessionSave();
 }
 
@@ -1848,14 +1934,7 @@ function render(options = {}) {
     : getTimelineCardRects(options.animateIds || null);
   updateMemoryStatus();
   updateHistoryButtons();
-  // Stats
-  const total = Object.keys(photos).length;
-  const anchored = Object.values(photos).filter(p => p.timestamp && !p._interpolated).length;
-  const interp = Object.values(photos).filter(p => p._interpolated).length;
-  document.getElementById('statTotal').textContent = total;
-  document.getElementById('statAnchored').textContent = anchored;
-  document.getElementById('statInterp').textContent = interp;
-  document.getElementById('statUnplaced').textContent = unplaced.length;
+  updateStats();
 
   // Pool
   if (options.renderPool !== false) {

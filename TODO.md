@@ -57,8 +57,9 @@
 
 ### 9. Next optimization order
 
-- [ ] Optimize undo/redo using compact operation or delta history instead of restoring the full photo collection.
+- [x] Optimize undo/redo with compact history and incremental timeline/timestamp restoration.
 - [ ] Move cards between the pool and timeline incrementally, without rebuilding both lists.
+- [ ] Update timestamp edits incrementally instead of rebuilding every card.
 - [ ] Replace separator hover feedback with one stable insertion indicator positioned from the current drag location.
 - [ ] Delegate card and drag events from the list containers instead of embedding handlers on every card.
 - [ ] Re-test 1,000-photo interactions after each change and compare memory and response latency.
