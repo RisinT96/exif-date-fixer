@@ -703,6 +703,9 @@
 
 <script src="https://cdn.jsdelivr.net/npm/exifreader@4.16.0/dist/exif-reader.min.js"></script>
 <script>
+// ── APPLICATION STATE ─────────────────────────────────────────────────────
+// `photos` holds records; `timeline` and `unplaced` are the canonical ordered
+// ID lists. Original File references remain runtime-only and are not saved.
 // photos keyed by numeric id (string of integer)
 let photos = {};
 let nextId = 0;
@@ -752,6 +755,7 @@ const historyFuture = [];
 const historyPhotoRegistry = new Map();
 const MAX_HISTORY = 100;
 
+// ── PROCESSING STATUS, MEMORY, AND HISTORY ─────────────────────────────────
 function updateProcessingProgress() {
   if (!processingState) return;
   const { processed, total, errors } = processingState;
@@ -819,6 +823,8 @@ function recalculateEstimatedAppBytes() {
     .reduce((total, photo) => total + estimatePhotoBytes(photo), 0);
 }
 
+// Immutable photo data is registered once for history. Snapshots store only
+// ordering and timestamp-related mutable state, enabling fast incremental undo.
 function updateStats() {
   const allPhotos = Object.values(photos);
   document.getElementById('statTotal').textContent = allPhotos.length;
@@ -1151,6 +1157,7 @@ async function deleteSavedSession() {
   }
 }
 
+// ── PERSISTENCE AND FILE INGESTION ─────────────────────────────────────────
 async function readExifDate(file) {
   try {
     // ExifReader reads the file internally. We deliberately do not retain the
@@ -1252,6 +1259,8 @@ function sourceMatchesPhoto(photo, file, identity) {
   return Number(photo.modifiedTime) === Number(file.lastModified);
 }
 
+// Files are processed serially. Persistent thumbnails are small; source files
+// stay lazy and are read only when opened in the full-screen viewer.
 async function handleFiles(files) {
   const existingPhotosByName = new Map(Object.values(photos).map(photo => [photo.name, photo]));
 
@@ -1338,6 +1347,8 @@ function handleFileDrop(e) {
   handleFiles(e.dataTransfer.files);
 }
 
+// ── TIMELINE INTERPOLATION ─────────────────────────────────────────────────
+// The implementation uses anchor passes rather than repeated timeline scans.
 function interpolateAll() {
   const previousAnchors = new Array(timeline.length).fill(-1);
   const nextAnchors = new Array(timeline.length).fill(-1);
@@ -1413,6 +1424,7 @@ function sourceIds(source) {
   return source === 'timeline' ? timeline : unplaced;
 }
 
+// ── SELECTION, DRAGGING, AND INCREMENTAL DOM UPDATES ───────────────────────
 function handleCardClick(e, id, source) {
   if (e.target.closest('button')) return;
   id = String(id);
@@ -1970,6 +1982,7 @@ function confirmTimestamp() {
   closeModal();
 }
 
+// ── EXPORT, IMPORT, AND SUMMARY MODALS ─────────────────────────────────────
 function exportCSV() {
   const rows = ['filename,timestamp'];
   const all = [...timeline, ...unplaced];
@@ -2032,6 +2045,8 @@ function closeDryRunSummary() {
   document.getElementById('summaryModal').style.display = 'none';
 }
 
+// ── FULL-SCREEN VIEWER ─────────────────────────────────────────────────────
+// Object URLs exist only while the viewer is open and are revoked on close.
 function openPhotoViewer(event, id) {
   event?.stopPropagation();
   const photoId = String(id);
@@ -2172,6 +2187,9 @@ function animateTimelineCards(oldRects, onlyIds = null) {
   });
 }
 
+// ── FULL RENDER FALLBACK ───────────────────────────────────────────────────
+// Prefer the incremental selection, reorder, transfer, and history paths for
+// frequent interactions. This function is for startup and broad state changes.
 function render(options = {}) {
   const oldTimelineRects = options.animate === false
     ? null
