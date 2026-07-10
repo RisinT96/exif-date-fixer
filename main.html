@@ -125,6 +125,37 @@
   }
   .drop-zone input { display: none; }
 
+  .processing-status {
+    display: none;
+    margin-top: 10px;
+    font-size: 11px;
+    color: #8a8690;
+  }
+  .processing-status.active { display: block; }
+  .progress-track {
+    height: 5px;
+    margin: 6px 0 5px;
+    overflow: hidden;
+    border-radius: 999px;
+    background: #2e2e3a;
+  }
+  .progress-bar {
+    width: 0;
+    height: 100%;
+    border-radius: inherit;
+    background: #5b6af0;
+    transition: width 0.15s ease;
+  }
+  .processing-errors {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    max-height: 100px;
+    overflow-y: auto;
+    color: #e05a5a;
+    word-break: break-word;
+  }
+
   .stats {
     font-size: 12px;
     color: #6a6670;
@@ -431,6 +462,13 @@
         <div style="font-size:11px;margin-top:4px;">JPG, PNG, HEIC, etc.</div>
       </div>
       <input type="file" id="fileInput" multiple accept="image/*" style="display:none">
+      <div class="processing-status" id="processingStatus" aria-live="polite">
+        <div id="processingLabel">Processing images…</div>
+        <div class="progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+          <div class="progress-bar" id="processingBar"></div>
+        </div>
+        <div class="processing-errors" id="processingErrors"></div>
+      </div>
     </div>
 
     <div class="sidebar-section">
@@ -497,6 +535,35 @@ const SESSION_STORE = 'state';
 const SESSION_KEY = 'current';
 let sessionReady = false;
 let saveTimer = null;
+let processingState = null;
+
+function updateProcessingProgress() {
+  if (!processingState) return;
+  const { processed, total, errors } = processingState;
+  const percent = total ? Math.round((processed / total) * 100) : 100;
+  const status = document.getElementById('processingStatus');
+  const bar = document.getElementById('processingBar');
+  const label = document.getElementById('processingLabel');
+  const errorList = document.getElementById('processingErrors');
+  const progress = bar?.parentElement;
+  if (!status || !bar || !label || !errorList) return;
+
+  status.classList.add('active');
+  bar.style.width = `${percent}%`;
+  progress?.setAttribute('aria-valuenow', String(percent));
+  label.textContent = processingState.active
+    ? `Processing ${processed} of ${total}…`
+    : `Processed ${processed} of ${total}`;
+  errorList.innerHTML = errors
+    .map(error => `<div>${escapeHtml(error)}</div>`)
+    .join('');
+}
+
+function escapeHtml(value) {
+  return String(value).replace(/[&<>"']/g, char => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  }[char]));
+}
 
 function detectCamera(name) {
   if (name.startsWith('DSC')) return CAM1;
@@ -677,8 +744,7 @@ async function readExifDate(file) {
     }
     return null;
   } catch (err) {
-    console.warn('Could not read EXIF for', file.name, err);
-    return null;
+    throw new Error(err?.message || 'metadata could not be read', { cause: err });
   }
 }
 
@@ -721,14 +787,34 @@ function makeThumbnail(file) {
 async function handleFiles(files) {
   const existingNames = new Set(Object.values(photos).map(p => p.name));
 
+  let total = 0;
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i];
+    if (file.type.startsWith('image/') || file.name.match(/\.(jpg|jpeg|png|webp|avif|heic|heif|tiff|tif|raw|crw|cr2|dng|dcr|nef|arw|raf|orf|rw2)$/i)) total++;
+  }
+  if (!total) return;
+
+  processingState = { active: true, processed: 0, total, errors: [] };
+  updateProcessingProgress();
+
   // Process one File at a time. Do not Array.from(files): that would keep a
   // second in-memory reference to every selected file until the whole batch ends.
   for (let i = 0; i < files.length; i++) {
     const file = files[i];
     if (!(file.type.startsWith('image/') || file.name.match(/\.(jpg|jpeg|png|webp|avif|heic|heif|tiff|tif|raw|crw|cr2|dng|dcr|nef|arw|raf|orf|rw2)$/i))) continue;
-    if (existingNames.has(file.name)) continue;
+    if (existingNames.has(file.name)) {
+      processingState.processed++;
+      updateProcessingProgress();
+      continue;
+    }
     const id = String(nextId++);
-    const timestamp = await readExifDate(file);
+    let timestamp = null;
+    try {
+      timestamp = await readExifDate(file);
+    } catch (err) {
+      const path = file.webkitRelativePath || file.name;
+      processingState.errors.push(`Metadata error: ${path} — ${err.message}`);
+    }
     const thumbURL = await makeThumbnail(file);
     const camera = detectCamera(file.name);
     photos[id] = { id, name: file.name, camera, timestamp, thumbURL, inTimeline: false, _interpolated: null };
@@ -739,7 +825,12 @@ async function handleFiles(files) {
       unplaced.push(id);
     }
     existingNames.add(file.name);
+    processingState.processed++;
+    updateProcessingProgress();
   }
+
+  processingState.active = false;
+  updateProcessingProgress();
 
   timeline.sort((a, b) => {
     const ta = photos[a].timestamp, tb = photos[b].timestamp;
