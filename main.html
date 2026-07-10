@@ -601,7 +601,8 @@
   }
   .modal h2 { font-size: 16px; margin-bottom: 6px; }
   .modal p { font-size: 13px; color: #8a8690; margin-bottom: 16px; line-height: 1.5; }
-  .modal input[type="datetime-local"] {
+  .modal input[type="datetime-local"],
+  .modal input[type="number"] {
     width: 100%;
     padding: 8px 10px;
     background: #13131a;
@@ -614,6 +615,14 @@
   }
   .modal input:focus { border-color: #5b6af0; }
   .modal-actions { display: flex; gap: 8px; justify-content: flex-end; }
+  .settings-check {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    margin-top: 12px;
+    color: #c8c4be;
+    font-size: 12px;
+  }
   .summary-grid {
     display: grid;
     grid-template-columns: 1fr auto;
@@ -679,6 +688,7 @@
     <button class="btn btn-ghost" id="redoBtn" onclick="redoLastChange()" disabled title="Redo (Ctrl/Cmd+Shift+Z)">Redo</button>
     <button class="btn btn-ghost" onclick="exportSessionFile()">Export Session</button>
     <button class="btn btn-ghost" onclick="document.getElementById('sessionFileInput').click()">Import Session</button>
+    <button class="btn btn-ghost" onclick="openSettings()">Settings</button>
     <button class="btn btn-ghost" onclick="showDryRunSummary()">Summary</button>
     <button class="btn btn-ghost" onclick="clearAll()">Clear</button>
     <button class="btn btn-primary" id="exportBtn" disabled onclick="exportCSV()">Export CSV</button>
@@ -769,6 +779,24 @@
   </div>
 </div>
 
+<div class="modal-overlay" id="settingsModal" style="display:none">
+  <div class="modal">
+    <h2>Settings</h2>
+    <p>Process this many photos concurrently during future imports. Higher values can import faster but use more memory.</p>
+    <label for="importConcurrency" style="display:block;margin-bottom:6px;font-size:12px;color:#c8c4be">Import parallelization</label>
+    <input type="number" id="importConcurrency" min="1" step="1" value="2"
+      aria-label="Import parallelization multiplier">
+    <label class="settings-check">
+      <input type="checkbox" id="incrementalImport" checked>
+      Show completed photos during import
+    </label>
+    <div class="modal-actions" style="margin-top:16px">
+      <button class="btn btn-ghost" onclick="closeSettings()">Cancel</button>
+      <button class="btn btn-primary" onclick="saveSettings()">Save</button>
+    </div>
+  </div>
+</div>
+
 <div class="viewer-overlay" id="photoViewer" style="display:none"
      role="dialog" aria-modal="true" aria-label="Photo viewer"
      onclick="handleViewerBackgroundClick(event)">
@@ -793,6 +821,8 @@ let modalTargets = [];
 let selectedIds = new Set();
 let selectionAnchor = null;
 let unplacedSortMode = 'name';
+let importConcurrencyMultiplier = 2;
+let incrementalImportEnabled = true;
 let viewerObjectURL = null;
 let viewerPhotoId = null;
 let pointerDrag = null;
@@ -835,6 +865,10 @@ const historyPast = [];
 const historyFuture = [];
 const historyPhotoRegistry = new Map();
 const MAX_HISTORY = 100;
+const MIN_IMPORT_CONCURRENCY = 1;
+const IMPORT_UI_FLUSH_INTERVAL_MS = 350;
+const IMPORT_PROGRESS_UPDATE_INTERVAL_MS = 150;
+let processingProgressTimer = null;
 
 // ── PROCESSING STATUS, MEMORY, AND HISTORY ─────────────────────────────────
 function updateProcessingProgress() {
@@ -861,6 +895,48 @@ function updateProcessingProgress() {
     .map(error => `<div>${escapeHtml(error)}</div>`)
     .join('');
   updateMemoryStatus();
+}
+
+function scheduleProcessingProgressUpdate() {
+  if (processingProgressTimer !== null) return;
+  processingProgressTimer = setTimeout(() => {
+    processingProgressTimer = null;
+    updateProcessingProgress();
+  }, IMPORT_PROGRESS_UPDATE_INTERVAL_MS);
+}
+
+function flushProcessingProgressUpdate() {
+  if (processingProgressTimer !== null) {
+    clearTimeout(processingProgressTimer);
+    processingProgressTimer = null;
+  }
+  updateProcessingProgress();
+}
+
+function normalizeImportConcurrency(value) {
+  const parsed = Number(value);
+  return Number.isInteger(parsed)
+    ? Math.max(MIN_IMPORT_CONCURRENCY, parsed)
+    : 2;
+}
+
+function openSettings() {
+  document.getElementById('importConcurrency').value = String(importConcurrencyMultiplier);
+  document.getElementById('incrementalImport').checked = incrementalImportEnabled;
+  document.getElementById('settingsModal').style.display = 'flex';
+}
+
+function closeSettings() {
+  document.getElementById('settingsModal').style.display = 'none';
+}
+
+function saveSettings() {
+  importConcurrencyMultiplier = normalizeImportConcurrency(
+    document.getElementById('importConcurrency').value
+  );
+  incrementalImportEnabled = document.getElementById('incrementalImport').checked;
+  closeSettings();
+  scheduleSessionSave();
 }
 
 function escapeHtml(value) {
@@ -1142,6 +1218,8 @@ function buildSessionState() {
     savedAt: new Date().toISOString(),
     nextId,
     unplacedSortMode,
+    importConcurrencyMultiplier,
+    incrementalImportEnabled,
     timeline: [...timeline],
     unplaced: [...unplaced],
     photos: cleanPhotos
@@ -1154,6 +1232,8 @@ function restoreSessionState(state) {
   nextId = Number(state.nextId) || 0;
   unplacedSortMode = ['name', 'capture', 'modified'].includes(state.unplacedSortMode)
     ? state.unplacedSortMode : 'name';
+  importConcurrencyMultiplier = normalizeImportConcurrency(state.importConcurrencyMultiplier);
+  incrementalImportEnabled = state.incrementalImportEnabled !== false;
   timeline = Array.isArray(state.timeline) ? state.timeline.map(String) : [];
   unplaced = Array.isArray(state.unplaced) ? state.unplaced.map(String) : [];
 
@@ -1370,6 +1450,35 @@ function countSupportedPhotoFiles(files) {
   return total;
 }
 
+const IMPORT_WORKER_SOURCE = `
+importScripts('https://cdn.jsdelivr.net/npm/exifreader@4.16.0/dist/exif-reader.min.js');
+function parseDate(v) { const m=String(v||'').trim().match(/^(\\d{4})[:\\-](\\d{2})[:\\-](\\d{2})[ T](\\d{2}):(\\d{2})(?::(\\d{2})(?:\\.(\\d{1,3}))?)?/); if(!m)return null; const a=m.slice(1).map((x,i)=>Number(i===6?String(x||'0').padEnd(3,'0').slice(0,3):x||0)); return a[0]>=1970&&a[0]<=2100?new Date(a[0],a[1]-1,a[2],a[3],a[4],a[5],a[6]).getTime():null; }
+async function fingerprint(f) { const n=1048576, first=await f.slice(0,n).arrayBuffer(), start=Math.max(0,f.size-n), last=start?await f.slice(start).arrayBuffer():first, meta=new TextEncoder().encode(f.name+'\\0'+f.size+'\\0'+f.lastModified+'\\0'+f.type), bytes=new Uint8Array(meta.byteLength+first.byteLength+(start?last.byteLength:0)); bytes.set(meta); bytes.set(new Uint8Array(first),meta.byteLength); if(start)bytes.set(new Uint8Array(last),meta.byteLength+first.byteLength); const d=await crypto.subtle.digest('SHA-256',bytes); return Array.from(new Uint8Array(d),x=>x.toString(16).padStart(2,'0')).join(''); }
+async function thumbnail(f) { try { const b=await createImageBitmap(f), s=Math.min(240/b.width,240/b.height,1), w=Math.round(b.width*s), h=Math.round(b.height*s), c=new OffscreenCanvas(w,h); c.getContext('2d').drawImage(b,0,0,w,h); b.close(); const a=new Uint8Array(await (await c.convertToBlob({type:'image/jpeg',quality:.7})).arrayBuffer()); let text=''; for(let i=0;i<a.length;i+=32768)text+=String.fromCharCode(...a.subarray(i,i+32768)); return 'data:image/jpeg;base64,'+btoa(text); } catch { return null; } }
+self.onmessage=async({data})=>{ if(data.type==='init'){ self.postMessage({type:'ready'}); return; } try { const f=data.file, fp=await fingerprint(f); if(!data.preview){self.postMessage({id:data.id,ok:true,result:{sourceSize:f.size,sourceFingerprint:fp}});return;} const [tags,thumb]=await Promise.all([f.arrayBuffer().then(buffer=>ExifReader.load(buffer)).catch(()=>null),thumbnail(f)]); const candidates=[['DateTimeOriginal','exif'],['CreateDate','exif'],['ModifyDate','exif'],['DateTimeDigitized','exif'],['DateTime','exif'],['XMP-xmp:CreateDate','xmp'],['XMP-photoshop:DateCreated','xmp']]; let timestamp=null,source=null; for(const [k,s] of candidates){timestamp=parseDate(tags?.[k]?.description);if(timestamp){source=s;break;}} self.postMessage({id:data.id,ok:true,result:{sourceSize:f.size,sourceFingerprint:fp,timestamp,timestampSource:source,thumbURL:thumb}}); } catch(e){self.postMessage({id:data.id,ok:false,error:e.message||'Worker processing failed'});} };
+`;
+
+function assertImportWorkerSupport() {
+  const missing = [!globalThis.Worker && 'Web Workers', !globalThis.OffscreenCanvas && 'OffscreenCanvas', !globalThis.createImageBitmap && 'createImageBitmap', !globalThis.crypto?.subtle && 'Web Crypto'].filter(Boolean);
+  if (missing.length) throw new Error(`This browser cannot import photos: ${missing.join(', ')} is required.`);
+}
+
+async function createImportWorkers(count) {
+  assertImportWorkerSupport();
+  const url = URL.createObjectURL(new Blob([IMPORT_WORKER_SOURCE], { type: 'text/javascript' }));
+  try {
+    return await Promise.all(Array.from({ length: count }, () => new Promise((resolve, reject) => {
+      const worker = new Worker(url); let ready = false; let pending = null;
+      worker.onmessage = ({ data }) => {
+        if (data.type === 'ready') { ready = true; resolve({ run: (file, preview) => new Promise((ok, fail) => { pending = { ok, fail }; worker.postMessage({ id: 1, file, preview }); }), terminate: () => worker.terminate() }); }
+        else if (pending) { const { ok, fail } = pending; pending = null; data.ok ? ok(data.result) : fail(new Error(data.error)); }
+      };
+      worker.onerror = event => { if (!ready) reject(new Error(`Import worker failed: ${event.message}`)); else pending?.fail(new Error(event.message)); };
+      worker.postMessage({ type: 'init' });
+    })));
+  } finally { URL.revokeObjectURL(url); }
+}
+
 // New selections join one serial queue. This prevents concurrent imports from
 // overwriting shared progress state or competing to update the same DOM.
 function handleFiles(files) {
@@ -1391,7 +1500,7 @@ function handleFiles(files) {
     .finally(() => {
       queuedImportJobs--;
       if (!queuedImportJobs) processingState.active = false;
-      updateProcessingProgress();
+      flushProcessingProgressUpdate();
     });
   importQueue = job;
   return importQueue;
@@ -1405,9 +1514,11 @@ async function processFiles(files) {
   let pendingTimelineIds = [];
   let pendingUnplacedIds = [];
   let importRenderTimer = null;
+  const renderIncrementally = incrementalImportEnabled;
 
-  // Rendering an import in small batches makes new photos visible promptly
-  // without paying for a DOM update after every decoded thumbnail.
+  // Completed photos accumulate between UI flushes. This keeps import workers
+  // busy while sorting, interpolation, layout, and stats update in one larger
+  // coalesced batch rather than competing with every decoded thumbnail.
   const flushImportedCards = () => {
     if (importRenderTimer !== null) {
       clearTimeout(importRenderTimer);
@@ -1438,47 +1549,38 @@ async function processFiles(files) {
     document.getElementById('exportBtn').disabled = !timeline.length;
   };
   const scheduleImportedCardsFlush = () => {
+    if (!renderIncrementally) return;
     if (importRenderTimer === null) {
-      importRenderTimer = setTimeout(flushImportedCards, 150);
+      importRenderTimer = setTimeout(flushImportedCards, IMPORT_UI_FLUSH_INTERVAL_MS);
     }
   };
 
   pushHistory();
 
-  // Process one File at a time. Do not Array.from(files): that would keep a
-  // second in-memory reference to every selected file until the whole batch ends.
-  for (let i = 0; i < files.length; i++) {
-    const file = files[i];
-    if (!isSupportedPhotoFile(file)) continue;
+  let nextFileIndex = 0;
+  const filenameWork = new Map();
+  const workerCount = Math.min(importConcurrencyMultiplier, countSupportedPhotoFiles(files));
+  const importWorkers = await createImportWorkers(workerCount);
+
+  const processOneFile = async (worker, file) => {
     const existingPhoto = existingPhotosByName.get(file.name);
-    const sourceIdentity = await getSourceIdentity(file);
+    const result = await worker.run(file, !existingPhoto);
+    const sourceIdentity = { sourceSize: result.sourceSize, sourceFingerprint: result.sourceFingerprint };
     if (existingPhoto) {
       const path = file.webkitRelativePath || file.name;
       if (sourceMatchesPhoto(existingPhoto, file, sourceIdentity)) {
         existingPhoto.sourceFile = file;
         existingPhoto.sourceSize = sourceIdentity.sourceSize;
         existingPhoto.sourceFingerprint ||= sourceIdentity.sourceFingerprint;
-        processingState.processed++;
-        updateProcessingProgress();
-        continue;
+        return;
       }
       processingState.errors.push(`File mismatch for existing photo: ${path}`);
-      processingState.processed++;
-      updateProcessingProgress();
-      continue;
+      return;
     }
     const id = String(nextId++);
-    let timestamp = null;
-    let timestampSource = null;
-    try {
-      const metadata = await readExifDate(file);
-      timestamp = metadata?.date || null;
-      timestampSource = metadata?.source || null;
-    } catch (err) {
-      const path = file.webkitRelativePath || file.name;
-      processingState.errors.push(`Metadata error: ${path} — ${err.message}`);
-    }
-    const thumbURL = await makeThumbnail(file);
+    const timestamp = result.timestamp ? new Date(result.timestamp) : null;
+    const timestampSource = result.timestampSource || null;
+    const thumbURL = result.thumbURL;
     const camera = detectCamera(file.name);
     // Keep only a lazy reference to the source. The file bytes are not read
     // into app state; they are loaded only if the user opens this photo.
@@ -1493,10 +1595,38 @@ async function processFiles(files) {
       pendingUnplacedIds.push(id);
     }
     existingPhotosByName.set(file.name, photos[id]);
-    processingState.processed++;
-    updateProcessingProgress();
-    if (pendingTimelineIds.length + pendingUnplacedIds.length >= 24) flushImportedCards();
-    else scheduleImportedCardsFlush();
+    // When incremental import is disabled, retain only the small ID buffers
+    // and let the final flush place every completed photo in one DOM pass.
+    scheduleImportedCardsFlush();
+  };
+
+  // Files with the same name preserve the original duplicate-check behavior,
+  // while unrelated files can hash, read metadata, and generate thumbnails in
+  // parallel. Only the small worker array is allocated; source Files stay in
+  // the browser-provided FileList until their worker needs them.
+  const runWorker = async worker => {
+    while (nextFileIndex < files.length) {
+      const file = files[nextFileIndex++];
+      if (!isSupportedPhotoFile(file)) continue;
+      const previousWork = filenameWork.get(file.name) || Promise.resolve();
+      const work = previousWork.then(() => processOneFile(worker, file));
+      filenameWork.set(file.name, work.catch(() => {}));
+      try {
+        await work;
+      } catch (error) {
+        const path = file.webkitRelativePath || file.name;
+        processingState.errors.push(`Processing error: ${path} — ${error.message}`);
+      } finally {
+        processingState.processed++;
+        scheduleProcessingProgressUpdate();
+      }
+    }
+  };
+
+  try {
+    await Promise.all(importWorkers.map(runWorker));
+  } finally {
+    importWorkers.forEach(worker => worker.terminate());
   }
 
   flushImportedCards();
