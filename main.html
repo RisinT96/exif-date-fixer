@@ -732,7 +732,7 @@
 
   <div class="timeline-area">
     <div class="timeline-toolbar">
-      <span>Drag photos onto the slim separators between images. Use Ctrl/Cmd-click to select multiple photos, or Shift-click for a range. Timestamps are <strong>interpolated automatically</strong> and your session is <strong>saved automatically</strong> in this browser.</span>
+      <span>Drag photos into the timeline; once it contains photos, use the slim separators between images. Use Ctrl/Cmd-click to select multiple photos, or Shift-click for a range. Timestamps are <strong>interpolated automatically</strong> and your session is <strong>saved automatically</strong> in this browser.</span>
     </div>
     <div class="timeline-scroll">
       <div class="timeline-list" id="timelineList"></div>
@@ -1361,10 +1361,47 @@ function insertAnchorIntoTimeline(id) {
 // stay lazy and are read only when opened in the full-screen viewer.
 async function handleFiles(files) {
   const existingPhotosByName = new Map(Object.values(photos).map(photo => [photo.name, photo]));
-  const previousTimeline = [...timeline];
-  const hadExistingPhotos = Object.keys(photos).length > 0;
-  const addedTimelineIds = [];
-  const addedUnplacedIds = [];
+  let renderedTimeline = [...timeline];
+  let pendingTimelineIds = [];
+  let pendingUnplacedIds = [];
+  let importRenderTimer = null;
+
+  // Rendering an import in small batches makes new photos visible promptly
+  // without paying for a DOM update after every decoded thumbnail.
+  const flushImportedCards = () => {
+    if (importRenderTimer !== null) {
+      clearTimeout(importRenderTimer);
+      importRenderTimer = null;
+    }
+    if (!pendingTimelineIds.length && !pendingUnplacedIds.length) return;
+    sortUnplacedByName();
+    interpolateAll();
+    if (pendingUnplacedIds.length) insertPoolCards(pendingUnplacedIds);
+    if (pendingTimelineIds.length) {
+      insertTimelineEntries(pendingTimelineIds);
+      const affectedIds = getTransferAffectedIds(
+        renderedTimeline, timeline, new Set(pendingTimelineIds)
+      );
+      refreshTimelineCards(affectedIds);
+      setTimeout(updateTimelineLineEnds, 0);
+    }
+    if (!timeline.length) {
+      document.getElementById('timelineList').innerHTML = `<div class="empty-state">
+        <h2>Drag photos here</h2>
+        <p>Drag photos from the left panel into this timeline.<br>Set at least two timestamps to enable interpolation.</p>
+      </div>` + mkDropTarget(0);
+    }
+    pendingTimelineIds = [];
+    pendingUnplacedIds = [];
+    renderedTimeline = [...timeline];
+    updateStats();
+    document.getElementById('exportBtn').disabled = !timeline.length;
+  };
+  const scheduleImportedCardsFlush = () => {
+    if (importRenderTimer === null) {
+      importRenderTimer = setTimeout(flushImportedCards, 150);
+    }
+  };
 
   let total = 0;
   for (let i = 0; i < files.length; i++) {
@@ -1419,34 +1456,24 @@ async function handleFiles(files) {
     if (timestamp) {
       photos[id].inTimeline = true;
       insertAnchorIntoTimeline(id);
-      addedTimelineIds.push(id);
+      pendingTimelineIds.push(id);
     } else {
       unplaced.push(id);
-      addedUnplacedIds.push(id);
+      pendingUnplacedIds.push(id);
     }
     existingPhotosByName.set(file.name, photos[id]);
     processingState.processed++;
     updateProcessingProgress();
+    if (pendingTimelineIds.length + pendingUnplacedIds.length >= 24) flushImportedCards();
+    else scheduleImportedCardsFlush();
   }
 
+  flushImportedCards();
   processingState.active = false;
   updateProcessingProgress();
 
   sortUnplacedByName();
   interpolateAll();
-  if (!hadExistingPhotos) {
-    render();
-    return;
-  }
-
-  if (addedUnplacedIds.length) insertPoolCards(addedUnplacedIds);
-  if (addedTimelineIds.length) insertTimelineEntries(addedTimelineIds);
-
-  if (addedTimelineIds.length) {
-    const affectedIds = getTransferAffectedIds(previousTimeline, timeline, new Set(addedTimelineIds));
-    refreshTimelineCards(affectedIds);
-    setTimeout(updateTimelineLineEnds, 0);
-  }
   updateMemoryStatus();
   updateHistoryButtons();
   updateStats();
@@ -2129,6 +2156,16 @@ function createDragGhost(id) {
 }
 
 function getDropTargetAtPoint(x, y) {
+  // With no timeline cards there are no separators. Treat the entire visible
+  // timeline area as the single insertion point so the first photo can land
+  // wherever it is released.
+  if (!timeline.length) {
+    const target = document.querySelector('#timelineList > .drop-target[data-drop-index="0"]');
+    const area = document.querySelector('.timeline-scroll')?.getBoundingClientRect();
+    if (target && area && x >= area.left && x <= area.right && y >= area.top && y <= area.bottom) {
+      return target;
+    }
+  }
   return findSeparatorNearPoint(x, y);
 }
 
