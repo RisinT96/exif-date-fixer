@@ -26,7 +26,7 @@
 ### 4. Add low-risk browser rendering optimizations
 
 - [x] Add CSS containment and `content-visibility` to photo-card containers.
-- [ ] Replace per-card inline event handlers with delegated events from the timeline and pool containers.
+- [x] Replace per-card inline event handlers with delegated events from the timeline and pool containers.
 - [x] Use direct DOM moves or equivalent batched DOM updates for timeline changes.
 
 ### 5. Virtualize the unplaced-photo pool
