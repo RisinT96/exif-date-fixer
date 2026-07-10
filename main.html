@@ -688,6 +688,7 @@ let selectedIds = new Set();
 let selectionAnchor = null;
 let unplacedSortMode = 'name';
 let viewerObjectURL = null;
+let viewerPhotoId = null;
 
 const CAM1 = 'DSC';
 const CAM2 = '976A';
@@ -1556,10 +1557,12 @@ function closeDryRunSummary() {
 
 function openPhotoViewer(event, id) {
   event?.stopPropagation();
-  const photo = photos[String(id)];
+  const photoId = String(id);
+  const photo = photos[photoId];
   if (!photo) return;
 
   closePhotoViewer();
+  viewerPhotoId = photoId;
   const overlay = document.getElementById('photoViewer');
   const image = document.getElementById('viewerImage');
   const fallback = document.getElementById('viewerFallback');
@@ -1606,10 +1609,20 @@ function closePhotoViewer() {
   image.removeAttribute('src');
   overlay.style.display = 'none';
   document.body.style.overflow = '';
+  viewerPhotoId = null;
 }
 
 function handleViewerBackgroundClick(event) {
   if (event.target.id === 'photoViewer') closePhotoViewer();
+}
+
+function navigatePhotoViewer(direction) {
+  if (!viewerPhotoId) return;
+  const orderedIds = [...timeline, ...unplaced];
+  const currentIndex = orderedIds.indexOf(viewerPhotoId);
+  if (currentIndex < 0) return;
+  const nextId = orderedIds[currentIndex + direction];
+  if (nextId !== undefined) openPhotoViewer(null, nextId);
 }
 
 async function importSessionFile(file) {
@@ -1801,6 +1814,13 @@ function mkDropTarget(idx, extraClass = '') {
 document.addEventListener('click', hideCardContextMenu);
 document.addEventListener('scroll', hideCardContextMenu, true);
 document.addEventListener('keydown', e => {
+  if (document.getElementById('photoViewer').style.display !== 'none') {
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+      e.preventDefault();
+      navigatePhotoViewer(e.key === 'ArrowLeft' ? -1 : 1);
+      return;
+    }
+  }
   if (e.key === 'Escape') {
     if (document.getElementById('photoViewer').style.display !== 'none') {
       closePhotoViewer();
