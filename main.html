@@ -268,7 +268,7 @@
     align-items: stretch;
     justify-content: center;
     color: transparent;
-    transition: width 0.16s ease, background 0.16s ease, opacity 0.16s ease;
+    transition: none;
     cursor: default;
     opacity: 0;
     flex: 0 0 12px;
@@ -287,7 +287,7 @@
     border-radius: 999px;
     background: transparent;
     margin: 8px 0;
-    transition: width 0.16s ease, background 0.16s ease, box-shadow 0.16s ease;
+    transition: none;
   }
   .drop-target.active {
     opacity: 1;
@@ -295,12 +295,28 @@
   .drop-target.active::before {
     background: #4a4a5a;
   }
+  .timeline-list.dragging .drop-target {
+    opacity: 1;
+  }
+  .timeline-list.dragging .drop-target::before {
+    background: #4a4a5a;
+  }
   .drop-target.hover {
-    width: 24px;
-    flex-basis: 24px;
+    width: 12px;
+    flex-basis: 12px;
     background: rgba(91,106,240,0.10);
   }
   .drop-target.hover::before {
+    width: 4px;
+    background: #8a90f0;
+    box-shadow: 0 0 14px rgba(138,144,240,0.65);
+  }
+  .timeline-list.dragging .drop-target:hover {
+    width: 12px;
+    flex-basis: 12px;
+    background: rgba(91,106,240,0.10);
+  }
+  .timeline-list.dragging .drop-target:hover::before {
     width: 4px;
     background: #8a90f0;
     box-shadow: 0 0 14px rgba(138,144,240,0.65);
@@ -1381,7 +1397,7 @@ function removeSelectedFromTimeline() {
   selectedIds.clear();
   selectionAnchor = null;
   interpolateAll();
-  render();
+  render({ animateIds: new Set(ids) });
 }
 
 function selectAllInActiveList() {
@@ -1400,11 +1416,85 @@ function clearSelection() {
   updateSelectionUI();
 }
 
+function refreshTimelineCardDisplay(id) {
+  const photo = photos[id];
+  const card = document.querySelector(`#timelineList .photo-card[data-photo-id="${id}"]`);
+  if (!photo || !card) return;
+
+  const isAnchor = photo.timestamp && !photo._interpolated;
+  const isInterp = !!photo._interpolated;
+  card.classList.remove('anchored', 'interpolated', 'unplaced-card');
+  card.classList.add(isAnchor ? 'anchored' : isInterp ? 'interpolated' : 'unplaced-card');
+
+  const time = getDisplayTime(photo);
+  const timeElement = card.querySelector('.photo-time');
+  if (timeElement) {
+    timeElement.className = `photo-time ${isAnchor ? 'known' : isInterp ? 'interpolated' : ''}`;
+    timeElement.textContent = time ? fmtTime(time.time) : 'No timestamp';
+  }
+
+  const actions = card.querySelector('.card-actions');
+  if (!actions) return;
+  actions.querySelectorAll('.photo-badge').forEach(badge => badge.remove());
+  const spacer = actions.querySelector('div[style*="flex:1"]');
+  if (!spacer) return;
+  const sourceBadge = isAnchor && photo.timestampSource
+    ? `<span class="photo-badge badge-source" title="Timestamp source">${photo.timestampSource.toUpperCase()}</span>` : '';
+  const badge = isAnchor
+    ? `<span class="photo-badge badge-anchor">ANCHOR</span>`
+    : isInterp ? `<span class="photo-badge badge-interp">~</span>` : '';
+  spacer.insertAdjacentHTML('beforebegin', sourceBadge + badge);
+}
+
+function getAffectedTimelineIds(previousTimeline, nextTimeline, movedIds) {
+  let start = Infinity;
+  let end = -1;
+  for (const id of movedIds) {
+    start = Math.min(start, previousTimeline.indexOf(id), nextTimeline.indexOf(id));
+    end = Math.max(end, previousTimeline.indexOf(id), nextTimeline.indexOf(id));
+  }
+  if (end < start) return new Set(movedIds);
+  return new Set([
+    ...previousTimeline.slice(start, end + 1),
+    ...nextTimeline.slice(start, end + 1)
+  ]);
+}
+
+function reorderTimelineDom(affectedIds, animateIds = affectedIds) {
+  const list = document.getElementById('timelineList');
+  const entriesById = new Map();
+  list.querySelectorAll('.timeline-entry').forEach(entry => {
+    const card = entry.querySelector('.photo-card[data-photo-id]');
+    if (card) entriesById.set(card.dataset.photoId, entry);
+  });
+  if (entriesById.size !== timeline.length) {
+    render();
+    return;
+  }
+
+  const oldRects = getTimelineCardRects(animateIds);
+  let nextEntry = list.firstElementChild;
+  timeline.forEach(id => {
+    const entry = entriesById.get(String(id));
+    if (entry !== nextEntry) list.insertBefore(entry, nextEntry);
+    nextEntry = entry.nextElementSibling;
+  });
+  affectedIds.forEach(id => refreshTimelineCardDisplay(String(id)));
+  setTimeout(updateTimelineLineEnds, 0);
+  animateTimelineCards(oldRects, animateIds);
+  updateMemoryStatus();
+  updateHistoryButtons();
+  document.getElementById('statInterp').textContent = Object.values(photos)
+    .filter(photo => photo._interpolated).length;
+  scheduleSessionSave();
+}
+
 function moveSelectedTimeline(delta) {
   const ids = selectedIdsInSource('timeline');
   if (!ids.length) return false;
   const selected = new Set(ids);
   const moved = [...timeline];
+  const previousTimeline = [...timeline];
 
   // Swap selected photos with adjacent unselected photos. Iterating in the
   // movement direction preserves gaps and moves each selected photo by one
@@ -1427,7 +1517,8 @@ function moveSelectedTimeline(delta) {
   pushHistory();
   timeline = moved;
   interpolateAll();
-  render();
+  const affectedIds = getAffectedTimelineIds(previousTimeline, timeline, new Set(ids));
+  reorderTimelineDom(affectedIds);
   return true;
 }
 
@@ -1441,9 +1532,7 @@ function onCardDragStart(e, id, source) {
   const ids = selectedIdsInSource(source);
   dragState = { source, ids };
   e.dataTransfer.effectAllowed = 'move';
-  setTimeout(() => {
-    document.querySelectorAll('.drop-target').forEach(el => el.classList.add('active'));
-  }, 0);
+  document.getElementById('timelineList').classList.add('dragging');
   ids.forEach(selectedId => {
     document.querySelector(`[data-photo-id="${selectedId}"]`)?.classList.add('dragging');
   });
@@ -1451,18 +1540,26 @@ function onCardDragStart(e, id, source) {
 
 function onCardDragEnd(e) {
   dragState = null;
-  document.querySelectorAll('.drop-target').forEach(el => el.classList.remove('active', 'hover'));
+  document.getElementById('timelineList').classList.remove('dragging');
   document.querySelectorAll('.dragging').forEach(el => el.classList.remove('dragging'));
 }
-
-function onDropTargetEnter(e) { if (dragState) e.currentTarget.classList.add('hover'); }
-function onDropTargetLeave(e) { e.currentTarget.classList.remove('hover'); }
 
 function onDropTargetDrop(e, insertIdx) {
   e.preventDefault();
   if (!dragState) return;
+  if (insertIdx == null) {
+    const target = e.currentTarget;
+    const entry = target.closest('.timeline-entry');
+    if (!entry) {
+      insertIdx = Number(target.dataset.dropIndex) || 0;
+    } else {
+      const entries = [...document.querySelectorAll('#timelineList .timeline-entry')];
+      insertIdx = entries.indexOf(entry) + (target.classList.contains('line-end-target') ? 1 : 0);
+    }
+  }
   const { source, ids } = dragState;
   if (!ids.length) return;
+  const movedIds = new Set(ids);
   pushHistory();
   if (source === 'pool') {
     const selected = new Set(ids);
@@ -1470,6 +1567,7 @@ function onDropTargetDrop(e, insertIdx) {
     ids.forEach(id => { photos[id].inTimeline = true; });
     timeline.splice(insertIdx, 0, ...ids);
   } else if (source === 'timeline') {
+    const previousTimeline = [...timeline];
     const selected = new Set(ids);
     const removedBeforeDrop = timeline
       .slice(0, insertIdx)
@@ -1477,9 +1575,13 @@ function onDropTargetDrop(e, insertIdx) {
     timeline = timeline.filter(id => !selected.has(id));
     const newIdx = Math.max(0, Math.min(timeline.length, insertIdx - removedBeforeDrop));
     timeline.splice(newIdx, 0, ...ids);
+    interpolateAll();
+    const affectedIds = getAffectedTimelineIds(previousTimeline, timeline, movedIds);
+    reorderTimelineDom(affectedIds);
+    return;
   }
   interpolateAll();
-  render();
+  render({ renderPool: source !== 'timeline', animateIds: movedIds });
 }
 
 function removeFromTimeline(id) {
@@ -1491,7 +1593,7 @@ function removeFromTimeline(id) {
   unplaced.push(id);
   sortUnplacedByName();
   interpolateAll();
-  render();
+  render({ animateIds: new Set([id]) });
 }
 
 function openTimestampModal(id) {
@@ -1706,18 +1808,20 @@ async function clearAll() {
   render();
 }
 
-function getTimelineCardRects() {
+function getTimelineCardRects(onlyIds = null) {
   const rects = new Map();
   document.querySelectorAll('#timelineList .photo-card[data-photo-id]').forEach(el => {
+    if (onlyIds && !onlyIds.has(el.dataset.photoId)) return;
     rects.set(el.dataset.photoId, el.getBoundingClientRect());
   });
   return rects;
 }
 
-function animateTimelineCards(oldRects) {
-  if (!oldRects || !oldRects.size) return;
+function animateTimelineCards(oldRects, onlyIds = null) {
+  if ((!oldRects || !oldRects.size) && !onlyIds?.size) return;
   requestAnimationFrame(() => {
     document.querySelectorAll('#timelineList .photo-card[data-photo-id]').forEach(el => {
+      if (onlyIds && !onlyIds.has(el.dataset.photoId)) return;
       const oldRect = oldRects.get(el.dataset.photoId);
       if (!oldRect) {
         el.animate([
@@ -1739,7 +1843,9 @@ function animateTimelineCards(oldRects) {
 }
 
 function render(options = {}) {
-  const oldTimelineRects = options.animate === false ? null : getTimelineCardRects();
+  const oldTimelineRects = options.animate === false
+    ? null
+    : getTimelineCardRects(options.animateIds || null);
   updateMemoryStatus();
   updateHistoryButtons();
   // Stats
@@ -1752,25 +1858,27 @@ function render(options = {}) {
   document.getElementById('statUnplaced').textContent = unplaced.length;
 
   // Pool
-  sortUnplacedByName();
-  const sortSelect = document.getElementById('unplacedSort');
-  if (sortSelect) sortSelect.value = unplacedSortMode;
-  const grid = document.getElementById('poolGrid');
-  if (!unplaced.length) {
-    grid.innerHTML = '<div style="color:#4a4a58;font-size:12px;padding:6px;grid-column:1/-1">All photos placed ✓</div>';
-  } else {
-    grid.innerHTML = unplaced.map(id => {
-      const p = photos[id];
-      const selected = selectedIds.has(String(id)) ? ' selected' : '';
-      return `<div class="pool-card${selected}" data-photo-id="${id}" draggable="true"
-        onclick="handleCardClick(event,${id},'pool')"
-        ondragstart="onCardDragStart(event,${id},'pool')"
-        ondragend="onCardDragEnd(event)"
-        title="${p.name.replace(/"/g,'&quot;')}">
-        <div class="pool-thumb" onclick="openPhotoViewer(event,${id})">${p.thumbURL ? `<img src="${p.thumbURL}" loading="lazy" decoding="async" alt="">` : '🖼'}</div>
-        <div class="pool-name">${p.name}</div>
-      </div>`;
-    }).join('');
+  if (options.renderPool !== false) {
+    sortUnplacedByName();
+    const sortSelect = document.getElementById('unplacedSort');
+    if (sortSelect) sortSelect.value = unplacedSortMode;
+    const grid = document.getElementById('poolGrid');
+    if (!unplaced.length) {
+      grid.innerHTML = '<div style="color:#4a4a58;font-size:12px;padding:6px;grid-column:1/-1">All photos placed ✓</div>';
+    } else {
+      grid.innerHTML = unplaced.map(id => {
+        const p = photos[id];
+        const selected = selectedIds.has(String(id)) ? ' selected' : '';
+        return `<div class="pool-card${selected}" data-photo-id="${id}" draggable="true"
+          onclick="handleCardClick(event,${id},'pool')"
+          ondragstart="onCardDragStart(event,${id},'pool')"
+          ondragend="onCardDragEnd(event)"
+          title="${p.name.replace(/"/g,'&quot;')}">
+          <div class="pool-thumb" onclick="openPhotoViewer(event,${id})">${p.thumbURL ? `<img src="${p.thumbURL}" loading="lazy" decoding="async" alt="">` : '🖼'}</div>
+          <div class="pool-name">${p.name}</div>
+        </div>`;
+      }).join('');
+    }
   }
 
   // Timeline
@@ -1833,7 +1941,7 @@ function render(options = {}) {
   list.innerHTML = html;
   updateTimelineLineEnds();
   document.getElementById('exportBtn').disabled = false;
-  animateTimelineCards(oldTimelineRects);
+  animateTimelineCards(oldTimelineRects, options.animateIds || null);
   scheduleSessionSave();
 }
 
@@ -1848,9 +1956,9 @@ function updateTimelineLineEnds() {
 
 function mkDropTarget(idx, extraClass = '') {
   return `<div class="drop-target ${extraClass}"
-    ondragover="event.preventDefault(); onDropTargetEnter(event)"
-    ondragleave="onDropTargetLeave(event)"
-    ondrop="onDropTargetDrop(event,${idx})"
+    ondragover="event.preventDefault()"
+    data-drop-index="${idx}"
+    ondrop="onDropTargetDrop(event)"
     title="Drop here"
     aria-label="Drop photo here"></div>`;
 }
