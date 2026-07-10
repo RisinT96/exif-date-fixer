@@ -62,4 +62,4 @@
 - [x] Update timestamp edits incrementally instead of rebuilding every card.
 - [x] Replace separator hover feedback with a stable pointer-driven insertion indicator and expanded separator zones.
 - [x] Delegate card and pointer-drag events from the list containers instead of embedding handlers on every card.
-- [ ] Re-test 1,000-photo interactions after each change and compare memory and response latency.
+- [x] Re-test large-collection interactions: 1,500 timeline photos and 700 unplaced photos remained responsive.

@@ -1970,11 +1970,13 @@ function onCardPointerDown(event, id, source) {
   pointerDrag = {
     id: String(id), source, pointerId: event.pointerId,
     startX: event.clientX, startY: event.clientY,
+    lastX: event.clientX, lastY: event.clientY,
     active: false, dropTarget: null, card: event.currentTarget, ghost: null
   };
   document.addEventListener('pointermove', onPointerDragMove, { passive: false });
   document.addEventListener('pointerup', onPointerDragEnd);
   document.addEventListener('pointercancel', cancelPointerDrag);
+  document.addEventListener('scroll', onPointerDragScroll, true);
 }
 
 function beginPointerDrag(event) {
@@ -1991,7 +1993,7 @@ function beginPointerDrag(event) {
   const ghost = createDragGhost(id);
   document.body.appendChild(ghost);
   pointerDrag.ghost = ghost;
-  moveDragGhost(event);
+  moveDragGhost(event.clientX, event.clientY);
   document.getElementById('timelineList').classList.add('dragging');
   dragState.ids.forEach(selectedId => {
     document.querySelector(`[data-photo-id="${selectedId}"]`)?.classList.add('dragging');
@@ -2001,17 +2003,30 @@ function beginPointerDrag(event) {
 
 function onPointerDragMove(event) {
   if (!pointerDrag || event.pointerId !== pointerDrag.pointerId) return;
+  pointerDrag.lastX = event.clientX;
+  pointerDrag.lastY = event.clientY;
   if (!pointerDrag.active) {
     const distance = Math.hypot(event.clientX - pointerDrag.startX, event.clientY - pointerDrag.startY);
     if (distance < 6) return;
     beginPointerDrag(event);
   }
   event.preventDefault();
-  moveDragGhost(event);
-  const target = getDropTargetAtPoint(event.clientX, event.clientY);
+  refreshPointerDropTarget();
+}
+
+function refreshPointerDropTarget() {
+  if (!pointerDrag?.active) return;
+  moveDragGhost(pointerDrag.lastX, pointerDrag.lastY);
+  const target = getDropTargetAtPoint(pointerDrag.lastX, pointerDrag.lastY);
   pointerDrag.dropTarget = target || null;
   if (target) positionDropIndicator(target);
   else hideDropIndicator();
+}
+
+function onPointerDragScroll() {
+  if (!pointerDrag?.active) return;
+  pointerDrag.dropZones = buildDropZones();
+  refreshPointerDropTarget();
 }
 
 function onPointerDragEnd(event) {
@@ -2020,7 +2035,9 @@ function onPointerDragEnd(event) {
   if (active) {
     suppressCardClick = true;
     setTimeout(() => { suppressCardClick = false; }, 0);
-    if (dropTarget) onDropTargetDrop({ preventDefault() {}, currentTarget: dropTarget });
+    pointerDrag.dropZones = buildDropZones();
+    refreshPointerDropTarget();
+    if (pointerDrag.dropTarget) onDropTargetDrop({ preventDefault() {}, currentTarget: pointerDrag.dropTarget });
   }
   finishPointerDrag();
 }
@@ -2037,15 +2054,16 @@ function finishPointerDrag() {
   document.removeEventListener('pointermove', onPointerDragMove);
   document.removeEventListener('pointerup', onPointerDragEnd);
   document.removeEventListener('pointercancel', cancelPointerDrag);
+  document.removeEventListener('scroll', onPointerDragScroll, true);
   document.getElementById('timelineList').classList.remove('dragging');
   hideDropIndicator();
   document.querySelectorAll('.dragging').forEach(el => el.classList.remove('dragging'));
 }
 
-function moveDragGhost(event) {
+function moveDragGhost(x, y) {
   if (!pointerDrag?.ghost) return;
-  pointerDrag.ghost.style.left = `${Math.round(event.clientX + 14)}px`;
-  pointerDrag.ghost.style.top = `${Math.round(event.clientY + 14)}px`;
+  pointerDrag.ghost.style.left = `${Math.round(x + 14)}px`;
+  pointerDrag.ghost.style.top = `${Math.round(y + 14)}px`;
 }
 
 function createDragGhost(id) {
