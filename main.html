@@ -408,7 +408,27 @@
     user-drag: none;
   }
 
-  .photo-thumb { cursor: zoom-in; }
+  .view-btn {
+    position: absolute;
+    top: 5px;
+    right: 5px;
+    width: 26px;
+    height: 26px;
+    padding: 0;
+    border: 1px solid rgba(255,255,255,0.18);
+    border-radius: 5px;
+    background: rgba(19,19,26,0.78);
+    color: #d8d6e8;
+    cursor: zoom-in;
+    font-size: 16px;
+    line-height: 1;
+    opacity: 0;
+    transition: opacity 0.12s, background 0.12s;
+  }
+  .photo-thumb, .pool-thumb { position: relative; }
+  .photo-card:hover .view-btn, .pool-card:hover .view-btn,
+  .view-btn:focus-visible { opacity: 1; }
+  .view-btn:hover { background: #34344a; }
 
   .photo-footer {
     display: flex;
@@ -1587,6 +1607,12 @@ function onCardContainerClick(event) {
   handleCardClick(event, id, source);
 }
 
+function onCardContainerDoubleClick(event) {
+  const card = getCardFromEvent(event);
+  if (!card || event.target.closest('button')) return;
+  openPhotoViewer(event, card.dataset.photoId);
+}
+
 function onCardContainerPointerDown(event) {
   const card = getCardFromEvent(event);
   if (!card) return;
@@ -1713,7 +1739,7 @@ function poolCardMarkup(id) {
   const selected = selectedIds.has(String(id)) ? ' selected' : '';
   return `<div class="pool-card${selected}" data-photo-id="${id}"
     title="${photo.name.replace(/"/g,'&quot;')}">
-    <div class="pool-thumb" data-action="view">${photo.thumbURL ? `<img src="${photo.thumbURL}" loading="lazy" decoding="async" alt="">` : '🖼'}</div>
+    <div class="pool-thumb">${photo.thumbURL ? `<img src="${photo.thumbURL}" loading="lazy" decoding="async" alt="">` : '🖼'}<button type="button" class="view-btn" data-action="view" title="Open fullscreen" aria-label="Open ${escapeHtml(photo.name)} fullscreen">⛶</button></div>
     <div class="pool-name">${photo.name}</div>
   </div>`;
 }
@@ -1732,7 +1758,7 @@ function timelineEntryMarkup(id) {
     : isInterp ? `<span class="photo-badge badge-interp">~</span>` : '';
   const sourceBadge = sourceBadgeMarkup(photo, isAnchor);
   return `<div class="timeline-entry">${mkDropTarget(0)}<div class="photo-card ${cardClass}${selectedClass}" data-photo-id="${id}">
-    <div class="photo-thumb" data-action="view">${photo.thumbURL ? `<img src="${photo.thumbURL}" loading="lazy" decoding="async" alt="">` : '🖼'}</div>
+    <div class="photo-thumb">${photo.thumbURL ? `<img src="${photo.thumbURL}" loading="lazy" decoding="async" alt="">` : '🖼'}<button type="button" class="view-btn" data-action="view" title="Open fullscreen" aria-label="Open ${escapeHtml(photo.name)} fullscreen">⛶</button></div>
     <div class="photo-footer">
       <div class="photo-name">${photo.name}</div>
       <div class="photo-time ${timeClass}">${timeString}</div>
@@ -2553,7 +2579,7 @@ function render(options = {}) {
         const selected = selectedIds.has(String(id)) ? ' selected' : '';
         return `<div class="pool-card${selected}" data-photo-id="${id}"
           title="${p.name.replace(/"/g,'&quot;')}">
-          <div class="pool-thumb" data-action="view">${p.thumbURL ? `<img src="${p.thumbURL}" loading="lazy" decoding="async" alt="">` : '🖼'}</div>
+          <div class="pool-thumb">${p.thumbURL ? `<img src="${p.thumbURL}" loading="lazy" decoding="async" alt="">` : '🖼'}<button type="button" class="view-btn" data-action="view" title="Open fullscreen" aria-label="Open ${escapeHtml(p.name)} fullscreen">⛶</button></div>
           <div class="pool-name">${p.name}</div>
         </div>`;
       }).join('');
@@ -2597,7 +2623,7 @@ function render(options = {}) {
       : isInterp ? `<span class="photo-badge badge-interp">~</span>` : '';
     const sourceBadge = sourceBadgeMarkup(p, isAnchor);
     html += `<div class="timeline-entry">${mkDropTarget(i)}<div class="photo-card ${cardClass}${selectedClass}" data-photo-id="${id}">
-      <div class="photo-thumb" data-action="view">${p.thumbURL ? `<img src="${p.thumbURL}" loading="lazy" decoding="async" alt="">` : '🖼'}</div>
+      <div class="photo-thumb">${p.thumbURL ? `<img src="${p.thumbURL}" loading="lazy" decoding="async" alt="">` : '🖼'}<button type="button" class="view-btn" data-action="view" title="Open fullscreen" aria-label="Open ${escapeHtml(p.name)} fullscreen">⛶</button></div>
       <div class="photo-footer">
         <div class="photo-name">${p.name}</div>
         <div class="photo-time ${timeClass}">${timeStr}</div>
@@ -2640,6 +2666,8 @@ document.addEventListener('click', hideCardContextMenu);
 document.addEventListener('scroll', hideCardContextMenu, true);
 document.getElementById('poolGrid').addEventListener('click', onCardContainerClick);
 document.getElementById('timelineList').addEventListener('click', onCardContainerClick);
+document.getElementById('poolGrid').addEventListener('dblclick', onCardContainerDoubleClick);
+document.getElementById('timelineList').addEventListener('dblclick', onCardContainerDoubleClick);
 document.getElementById('poolGrid').addEventListener('pointerdown', onCardContainerPointerDown);
 document.getElementById('timelineList').addEventListener('pointerdown', onCardContainerPointerDown);
 document.getElementById('timelineList').addEventListener('contextmenu', onTimelineContextMenu);
