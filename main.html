@@ -511,6 +511,15 @@
   }
   .modal input:focus { border-color: #5b6af0; }
   .modal-actions { display: flex; gap: 8px; justify-content: flex-end; }
+  .summary-grid {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 7px 12px;
+    font-size: 12px;
+    color: #8a8690;
+  }
+  .summary-grid strong { color: #c8c4be; font-variant-numeric: tabular-nums; }
+  .summary-errors { margin-top: 14px; color: #e05a5a; font-size: 11px; line-height: 1.5; }
 </style>
 </head>
 <body>
@@ -528,6 +537,7 @@
     <button class="btn btn-ghost" id="redoBtn" onclick="redoLastChange()" disabled title="Redo (Ctrl/Cmd+Shift+Z)">Redo</button>
     <button class="btn btn-ghost" onclick="exportSessionFile()">Export Session</button>
     <button class="btn btn-ghost" onclick="document.getElementById('sessionFileInput').click()">Import Session</button>
+    <button class="btn btn-ghost" onclick="showDryRunSummary()">Summary</button>
     <button class="btn btn-ghost" onclick="saveSessionNow()">Save</button>
     <button class="btn btn-ghost" onclick="clearAll()">Clear</button>
     <button class="btn btn-primary" id="exportBtn" disabled onclick="exportCSV()">Export CSV</button>
@@ -603,6 +613,17 @@
 
 <div class="context-menu" id="cardContextMenu" style="display:none">
   <button type="button" onclick="removeSelectedFromTimeline()">Remove</button>
+</div>
+
+<div class="modal-overlay" id="summaryModal" style="display:none">
+  <div class="modal">
+    <h2>Session summary</h2>
+    <p id="summaryDescription">Read-only overview. No files will be changed.</p>
+    <div id="summaryContent"></div>
+    <div class="modal-actions" style="margin-top:16px">
+      <button class="btn btn-primary" onclick="closeDryRunSummary()">Close</button>
+    </div>
+  </div>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/exifreader@4.16.0/dist/exif-reader.min.js"></script>
@@ -1395,6 +1416,37 @@ function exportSessionFile() {
   a.download = 'photo_timestamp_editor_session.json';
   a.click();
   setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
+function showDryRunSummary() {
+  const allPhotos = Object.values(photos);
+  const anchors = allPhotos.filter(p => p.timestamp && !p._interpolated);
+  const interpolated = allPhotos.filter(p => p._interpolated);
+  const missing = allPhotos.filter(p => !p.timestamp && !p._interpolated);
+  const sourceCounts = anchors.reduce((counts, photo) => {
+    const source = photo.timestampSource || 'unknown';
+    counts[source] = (counts[source] || 0) + 1;
+    return counts;
+  }, {});
+  const errors = processingState?.errors || [];
+  const sourceRows = Object.entries(sourceCounts)
+    .map(([source, count]) => `<div>${escapeHtml(source.toUpperCase())} anchors</div><strong>${count}</strong>`)
+    .join('');
+
+  document.getElementById('summaryContent').innerHTML = `
+    <div class="summary-grid">
+      <div>Total photos</div><strong>${allPhotos.length}</strong>
+      <div>Anchors</div><strong>${anchors.length}</strong>
+      <div>Interpolated timestamps</div><strong>${interpolated.length}</strong>
+      <div>Missing timestamps</div><strong>${missing.length}</strong>
+      ${sourceRows}
+    </div>
+    ${errors.length ? `<div class="summary-errors"><strong>Processing errors (${errors.length})</strong>${errors.map(error => `<div>${escapeHtml(error)}</div>`).join('')}</div>` : ''}`;
+  document.getElementById('summaryModal').style.display = 'flex';
+}
+
+function closeDryRunSummary() {
+  document.getElementById('summaryModal').style.display = 'none';
 }
 
 async function importSessionFile(file) {
