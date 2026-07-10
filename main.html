@@ -513,6 +513,8 @@
       <span><span class="legend-dot" style="background:#c87a30"></span>Unplaced</span>
     </div>
     <span class="session-status" id="sessionStatus">Loading session…</span>
+    <button class="btn btn-ghost" id="undoBtn" onclick="undoLastChange()" disabled title="Undo (Ctrl/Cmd+Z)">Undo</button>
+    <button class="btn btn-ghost" id="redoBtn" onclick="redoLastChange()" disabled title="Redo (Ctrl/Cmd+Shift+Z)">Redo</button>
     <button class="btn btn-ghost" onclick="saveSessionNow()">Save</button>
     <button class="btn btn-ghost" onclick="clearAll()">Clear</button>
     <button class="btn btn-primary" id="exportBtn" disabled onclick="exportCSV()">Export CSV</button>
@@ -587,6 +589,19 @@
 <script src="https://cdn.jsdelivr.net/npm/exifreader@4.16.0/dist/exif-reader.min.js"></script>
 <script>
 // photos keyed by numeric id (string of integer)
+/*
+ * TODO roadmap (ordered by usefulness):
+ * 1. Undo/redo for timeline moves, removals, timestamp edits, and interpolation.
+ * 2. Keyboard shortcuts: Delete, Ctrl/Cmd+A, Escape, and arrow-key movement.
+ * 3. Bulk timestamp editing for the current selection.
+ * 4. Export/import the complete editing session, including placement and anchors.
+ * 5. Timestamp provenance indicators (EXIF, XMP, filename, or manual).
+ * 6. Duplicate filename detection across folders.
+ * 7. Sorting controls for unplaced photos.
+ * 8. Dry-run summary for timestamps, errors, and interpolations.
+ * 9. Retry controls for files that failed metadata parsing.
+ * 10. Configurable interpolation modes and intervals.
+ */
 let photos = {};
 let nextId = 0;
 let timeline = [];   // ordered list of numeric id strings
@@ -614,6 +629,9 @@ let sessionReady = false;
 let saveTimer = null;
 let processingState = null;
 let estimatedAppBytes = 0;
+const historyPast = [];
+const historyFuture = [];
+const MAX_HISTORY = 100;
 
 function updateProcessingProgress() {
   if (!processingState) return;
@@ -670,6 +688,54 @@ function updateMemoryStatus() {
 function estimatePhotoBytes(photo) {
   // JavaScript strings are approximately two bytes per character.
   return (photo.name?.length || 0) * 2 + (photo.thumbURL?.length || 0) * 2 + 512;
+}
+
+function recalculateEstimatedAppBytes() {
+  estimatedAppBytes = Object.values(photos)
+    .reduce((total, photo) => total + estimatePhotoBytes(photo), 0);
+}
+
+function captureEditorState() {
+  return structuredClone({ photos, nextId, timeline, unplaced });
+}
+
+function pushHistory() {
+  historyPast.push(captureEditorState());
+  if (historyPast.length > MAX_HISTORY) historyPast.shift();
+  historyFuture.length = 0;
+  updateHistoryButtons();
+}
+
+function restoreEditorState(state) {
+  photos = state.photos;
+  nextId = state.nextId;
+  timeline = state.timeline;
+  unplaced = state.unplaced;
+  recalculateEstimatedAppBytes();
+  selectedIds.clear();
+  selectionAnchor = null;
+  render();
+}
+
+function updateHistoryButtons() {
+  const undo = document.getElementById('undoBtn');
+  const redo = document.getElementById('redoBtn');
+  if (undo) undo.disabled = !historyPast.length;
+  if (redo) redo.disabled = !historyFuture.length;
+}
+
+function undoLastChange() {
+  if (!historyPast.length) return;
+  historyFuture.push(captureEditorState());
+  restoreEditorState(historyPast.pop());
+  updateHistoryButtons();
+}
+
+function redoLastChange() {
+  if (!historyFuture.length) return;
+  historyPast.push(captureEditorState());
+  restoreEditorState(historyFuture.pop());
+  updateHistoryButtons();
 }
 
 function detectCamera(name) {
@@ -903,6 +969,7 @@ async function handleFiles(files) {
   }
   if (!total) return;
 
+  pushHistory();
   processingState = { active: true, processed: 0, total, errors: [] };
   updateProcessingProgress();
 
@@ -1133,6 +1200,7 @@ function onDropTargetDrop(e, insertIdx) {
   if (!dragState) return;
   const { source, ids } = dragState;
   if (!ids.length) return;
+  pushHistory();
   if (source === 'pool') {
     unplaced = unplaced.filter(x => !ids.includes(x));
     ids.forEach(id => { photos[id].inTimeline = true; });
@@ -1152,6 +1220,7 @@ function onDropTargetDrop(e, insertIdx) {
 
 function removeFromTimeline(id) {
   id = String(id);
+  pushHistory();
   timeline = timeline.filter(x => x !== id);
   photos[id].inTimeline = false;
   photos[id]._interpolated = null;
@@ -1185,6 +1254,7 @@ function closeModal() {
 function confirmTimestamp() {
   const val = document.getElementById('modalInput').value;
   if (!val || !modalTarget) { closeModal(); return; }
+  pushHistory();
   photos[modalTarget].timestamp = new Date(val);
   photos[modalTarget]._interpolated = null;
   interpolateAll();
@@ -1219,6 +1289,7 @@ function csvCell(value) {
 async function clearAll() {
   if (!Object.keys(photos).length) return;
   if (!confirm('Clear all photos and delete the saved session?')) return;
+  pushHistory();
   photos = {}; estimatedAppBytes = 0; nextId = 0; timeline = []; unplaced = [];
   selectedIds.clear(); selectionAnchor = null;
   await deleteSavedSession();
@@ -1261,6 +1332,7 @@ function animateTimelineCards(oldRects) {
 function render() {
   const oldTimelineRects = getTimelineCardRects();
   updateMemoryStatus();
+  updateHistoryButtons();
   // Stats
   const total = Object.keys(photos).length;
   const anchored = Object.values(photos).filter(p => p.timestamp && !p._interpolated).length;
@@ -1379,6 +1451,12 @@ document.addEventListener('click', hideCardContextMenu);
 document.addEventListener('scroll', hideCardContextMenu, true);
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape') hideCardContextMenu();
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+    if (e.target.closest('input, textarea, [contenteditable="true"]')) return;
+    e.preventDefault();
+    if (e.shiftKey) redoLastChange();
+    else undoLastChange();
+  }
 });
 window.addEventListener('resize', updateTimelineLineEnds);
 document.getElementById('fileInput').addEventListener('change', async function() {
