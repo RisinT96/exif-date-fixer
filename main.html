@@ -424,6 +424,16 @@
   }
   .pool-thumb img { width: 100%; height: 100%; object-fit: cover; }
   .pool-name { font-size: 11px; color: #8a8690; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .sort-select {
+    width: 100%;
+    margin: 0 0 8px;
+    padding: 5px 6px;
+    border: 1px solid #2e2e3a;
+    border-radius: 5px;
+    background: #1e1e28;
+    color: #8a8690;
+    font-size: 11px;
+  }
 
   .context-menu {
     position: fixed;
@@ -560,6 +570,11 @@
 
     <div class="unplaced-pool" id="unplacedPool">
       <h3>Unplaced Photos</h3>
+      <select id="unplacedSort" class="sort-select" aria-label="Sort unplaced photos">
+        <option value="name">Sort: filename</option>
+        <option value="capture">Sort: capture time</option>
+        <option value="modified">Sort: file modified time</option>
+      </select>
       <div class="pool-grid" id="poolGrid"></div>
     </div>
   </div>
@@ -614,6 +629,7 @@ let dragState = null;
 let modalTargets = [];
 let selectedIds = new Set();
 let selectionAnchor = null;
+let unplacedSortMode = 'name';
 
 const CAM1 = 'DSC';
 const CAM2 = '976A';
@@ -623,7 +639,19 @@ const filenameCollator = new Intl.Collator(undefined, { numeric: true, sensitivi
 function sortUnplacedByName() {
   unplaced = unplaced
     .filter(id => photos[id] && !timeline.includes(id))
-    .sort((a, b) => filenameCollator.compare(photos[a].name || '', photos[b].name || ''));
+    .sort((a, b) => {
+      const pa = photos[a], pb = photos[b];
+      if (unplacedSortMode === 'capture') {
+        const ta = pa.timestamp?.getTime() ?? Infinity;
+        const tb = pb.timestamp?.getTime() ?? Infinity;
+        if (ta !== tb) return ta - tb;
+      } else if (unplacedSortMode === 'modified') {
+        const ma = pa.modifiedTime || Infinity;
+        const mb = pb.modifiedTime || Infinity;
+        if (ma !== mb) return ma - mb;
+      }
+      return filenameCollator.compare(pa.name || '', pb.name || '');
+    });
 }
 const SESSION_DB_NAME = 'photo-timestamp-editor-session';
 const SESSION_DB_VERSION = 1;
@@ -805,6 +833,7 @@ function buildSessionState() {
       camera: p.camera,
       timestamp: dateToLocalStamp(p.timestamp),
       timestampSource: p.timestampSource || null,
+      modifiedTime: p.modifiedTime || 0,
       thumbURL: p.thumbURL,
       inTimeline: p.inTimeline
     };
@@ -813,6 +842,7 @@ function buildSessionState() {
     version: 1,
     savedAt: new Date().toISOString(),
     nextId,
+    unplacedSortMode,
     timeline: [...timeline],
     unplaced: [...unplaced],
     photos: cleanPhotos
@@ -823,6 +853,8 @@ function restoreSessionState(state) {
   photos = {};
   estimatedAppBytes = 0;
   nextId = Number(state.nextId) || 0;
+  unplacedSortMode = ['name', 'capture', 'modified'].includes(state.unplacedSortMode)
+    ? state.unplacedSortMode : 'name';
   timeline = Array.isArray(state.timeline) ? state.timeline.map(String) : [];
   unplaced = Array.isArray(state.unplaced) ? state.unplaced.map(String) : [];
 
@@ -833,6 +865,7 @@ function restoreSessionState(state) {
       camera: p.camera || detectCamera(p.name || ''),
       timestamp: localStampToDate(p.timestamp),
       timestampSource: p.timestampSource || (p.timestamp ? 'exif' : null),
+      modifiedTime: Number(p.modifiedTime) || 0,
       thumbURL: p.thumbURL || null,
       inTimeline: !!p.inTimeline,
       _interpolated: null
@@ -1004,7 +1037,7 @@ async function handleFiles(files) {
     }
     const thumbURL = await makeThumbnail(file);
     const camera = detectCamera(file.name);
-    photos[id] = { id, name: file.name, camera, timestamp, timestampSource, thumbURL, inTimeline: false, _interpolated: null };
+    photos[id] = { id, name: file.name, camera, timestamp, timestampSource, modifiedTime: file.lastModified || 0, thumbURL, inTimeline: false, _interpolated: null };
     estimatedAppBytes += estimatePhotoBytes(photos[id]);
     if (timestamp) {
       timeline.push(id);
@@ -1447,6 +1480,8 @@ function render() {
 
   // Pool
   sortUnplacedByName();
+  const sortSelect = document.getElementById('unplacedSort');
+  if (sortSelect) sortSelect.value = unplacedSortMode;
   const grid = document.getElementById('poolGrid');
   if (!unplaced.length) {
     grid.innerHTML = '<div style="color:#4a4a58;font-size:12px;padding:6px;grid-column:1/-1">All photos placed ✓</div>';
@@ -1582,6 +1617,12 @@ document.addEventListener('keydown', e => {
   }
 });
 window.addEventListener('resize', updateTimelineLineEnds);
+document.getElementById('unplacedSort').addEventListener('change', function() {
+  unplacedSortMode = this.value;
+  sortUnplacedByName();
+  scheduleSessionSave();
+  render();
+});
 document.getElementById('fileInput').addEventListener('change', async function() {
   await handleFiles(this.files);
   this.value = ''; // release the picker references after processing the batch
