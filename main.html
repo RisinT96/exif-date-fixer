@@ -57,6 +57,11 @@
     border: 1px solid #2e2e3a;
   }
   .btn-ghost:hover { background: #22222c; color: #c8c4be; }
+  .btn:disabled {
+    opacity: 0.42;
+    cursor: not-allowed;
+    pointer-events: none;
+  }
 
   .btn-primary {
     background: #5b6af0;
@@ -204,7 +209,7 @@
 
   .pool-grid {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 6px;
   }
 
@@ -349,7 +354,7 @@
   .photo-thumb {
     width: 100%;
     height: 140px;
-    background: #2a2a36;
+    background: #1e1e28;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -358,7 +363,7 @@
     overflow: hidden;
     flex-shrink: 0;
   }
-  .photo-thumb img { width: 100%; height: 100%; object-fit: cover; }
+  .photo-thumb img { width: 100%; height: 100%; object-fit: contain; }
 
   .photo-thumb { cursor: zoom-in; }
 
@@ -434,6 +439,8 @@
     transition: all 0.12s;
     content-visibility: auto;
     contain-intrinsic-size: 120px 82px;
+    min-width: 0;
+    overflow: hidden;
   }
   .pool-card:hover { border-color: #5b6af0; background: #22222e; }
   .pool-card.dragging { opacity: 0.3; }
@@ -442,15 +449,16 @@
     width: 100%;
     height: 48px;
     border-radius: 3px;
-    background: #2a2a36;
+    background: #1e1e28;
     display: flex;
     align-items: center;
     justify-content: center;
     font-size: 22px;
     color: #3a3a50;
     overflow: hidden;
+    min-width: 0;
   }
-  .pool-thumb img { width: 100%; height: 100%; object-fit: cover; }
+  .pool-thumb img { width: 100%; height: 100%; object-fit: contain; }
   .pool-name { font-size: 11px; color: #8a8690; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .sort-select {
     width: 100%;
@@ -604,7 +612,6 @@
     <button class="btn btn-ghost" onclick="exportSessionFile()">Export Session</button>
     <button class="btn btn-ghost" onclick="document.getElementById('sessionFileInput').click()">Import Session</button>
     <button class="btn btn-ghost" onclick="showDryRunSummary()">Summary</button>
-    <button class="btn btn-ghost" onclick="saveSessionNow()">Save</button>
     <button class="btn btn-ghost" onclick="clearAll()">Clear</button>
     <button class="btn btn-primary" id="exportBtn" disabled onclick="exportCSV()">Export CSV</button>
   </div>
