@@ -1530,6 +1530,47 @@ function handleCardClick(e, id, source) {
   updateSelectionUI();
 }
 
+function getCardFromEvent(event) {
+  return event.target.closest('.photo-card[data-photo-id], .pool-card[data-photo-id]');
+}
+
+function getCardSource(card) {
+  return card.classList.contains('timeline-card') || card.classList.contains('photo-card')
+    ? 'timeline' : 'pool';
+}
+
+function onCardContainerClick(event) {
+  const card = getCardFromEvent(event);
+  if (!card) return;
+  const id = card.dataset.photoId;
+  const source = getCardSource(card);
+  const action = event.target.closest('[data-action]')?.dataset.action;
+  if (action === 'view') {
+    openPhotoViewer(event, id);
+    return;
+  }
+  if (action === 'remove') {
+    removeFromTimeline(id);
+    return;
+  }
+  if (action === 'edit-timestamp') {
+    openTimestampModal(id);
+    return;
+  }
+  handleCardClick(event, id, source);
+}
+
+function onCardContainerPointerDown(event) {
+  const card = getCardFromEvent(event);
+  if (!card) return;
+  onCardPointerDown(event, card.dataset.photoId, getCardSource(card));
+}
+
+function onTimelineContextMenu(event) {
+  const card = event.target.closest('.photo-card[data-photo-id]');
+  if (card) openCardContextMenu(event, card.dataset.photoId, 'timeline');
+}
+
 function selectedIdsInSource(source) {
   const ids = sourceIds(source).map(String);
   return ids.filter(id => selectedIds.has(id));
@@ -1644,10 +1685,8 @@ function poolCardMarkup(id) {
   const photo = photos[id];
   const selected = selectedIds.has(String(id)) ? ' selected' : '';
   return `<div class="pool-card${selected}" data-photo-id="${id}"
-    onclick="handleCardClick(event,${id},'pool')"
-    onpointerdown="onCardPointerDown(event,${id},'pool')"
     title="${photo.name.replace(/"/g,'&quot;')}">
-    <div class="pool-thumb" onclick="openPhotoViewer(event,${id})">${photo.thumbURL ? `<img src="${photo.thumbURL}" loading="lazy" decoding="async" alt="">` : '🖼'}</div>
+    <div class="pool-thumb" data-action="view">${photo.thumbURL ? `<img src="${photo.thumbURL}" loading="lazy" decoding="async" alt="">` : '🖼'}</div>
     <div class="pool-name">${photo.name}</div>
   </div>`;
 }
@@ -1665,11 +1704,8 @@ function timelineEntryMarkup(id) {
     ? `<span class="photo-badge badge-anchor">ANCHOR</span>`
     : isInterp ? `<span class="photo-badge badge-interp">~</span>` : '';
   const sourceBadge = sourceBadgeMarkup(photo, isAnchor);
-  return `<div class="timeline-entry">${mkDropTarget(0)}<div class="photo-card ${cardClass}${selectedClass}" data-photo-id="${id}"
-    onclick="handleCardClick(event,${id},'timeline')"
-    oncontextmenu="openCardContextMenu(event,${id},'timeline')"
-    onpointerdown="onCardPointerDown(event,${id},'timeline')">
-    <div class="photo-thumb" onclick="openPhotoViewer(event,${id})">${photo.thumbURL ? `<img src="${photo.thumbURL}" loading="lazy" decoding="async" alt="">` : '🖼'}</div>
+  return `<div class="timeline-entry">${mkDropTarget(0)}<div class="photo-card ${cardClass}${selectedClass}" data-photo-id="${id}">
+    <div class="photo-thumb" data-action="view">${photo.thumbURL ? `<img src="${photo.thumbURL}" loading="lazy" decoding="async" alt="">` : '🖼'}</div>
     <div class="photo-footer">
       <div class="photo-name">${photo.name}</div>
       <div class="photo-time ${timeClass}">${timeString}</div>
@@ -1677,8 +1713,8 @@ function timelineEntryMarkup(id) {
         ${sourceBadge}
         ${badge}
         <div style="flex:1"></div>
-        <button class="remove-btn" onclick="removeFromTimeline(${id})" title="Remove">×</button>
-        <button class="btn btn-ghost" style="font-size:10px;padding:2px 5px;flex-shrink:0" onclick="openTimestampModal(${id})" title="Set timestamp">✎</button>
+        <button class="remove-btn" data-action="remove" title="Remove">×</button>
+        <button class="btn btn-ghost" data-action="edit-timestamp" style="font-size:10px;padding:2px 5px;flex-shrink:0" title="Set timestamp">✎</button>
       </div>
     </div>
   </div>${mkDropTarget(0, 'line-end-target')}</div>`;
@@ -2471,10 +2507,8 @@ function render(options = {}) {
         const p = photos[id];
         const selected = selectedIds.has(String(id)) ? ' selected' : '';
         return `<div class="pool-card${selected}" data-photo-id="${id}"
-          onclick="handleCardClick(event,${id},'pool')"
-          onpointerdown="onCardPointerDown(event,${id},'pool')"
           title="${p.name.replace(/"/g,'&quot;')}">
-          <div class="pool-thumb" onclick="openPhotoViewer(event,${id})">${p.thumbURL ? `<img src="${p.thumbURL}" loading="lazy" decoding="async" alt="">` : '🖼'}</div>
+          <div class="pool-thumb" data-action="view">${p.thumbURL ? `<img src="${p.thumbURL}" loading="lazy" decoding="async" alt="">` : '🖼'}</div>
           <div class="pool-name">${p.name}</div>
         </div>`;
       }).join('');
@@ -2517,11 +2551,8 @@ function render(options = {}) {
       ? `<span class="photo-badge badge-anchor">ANCHOR</span>`
       : isInterp ? `<span class="photo-badge badge-interp">~</span>` : '';
     const sourceBadge = sourceBadgeMarkup(p, isAnchor);
-    html += `<div class="timeline-entry">${mkDropTarget(i)}<div class="photo-card ${cardClass}${selectedClass}" data-photo-id="${id}"
-      onclick="handleCardClick(event,${id},'timeline')"
-      oncontextmenu="openCardContextMenu(event,${id},'timeline')"
-      onpointerdown="onCardPointerDown(event,${id},'timeline')">
-      <div class="photo-thumb" onclick="openPhotoViewer(event,${id})">${p.thumbURL ? `<img src="${p.thumbURL}" loading="lazy" decoding="async" alt="">` : '🖼'}</div>
+    html += `<div class="timeline-entry">${mkDropTarget(i)}<div class="photo-card ${cardClass}${selectedClass}" data-photo-id="${id}">
+      <div class="photo-thumb" data-action="view">${p.thumbURL ? `<img src="${p.thumbURL}" loading="lazy" decoding="async" alt="">` : '🖼'}</div>
       <div class="photo-footer">
         <div class="photo-name">${p.name}</div>
         <div class="photo-time ${timeClass}">${timeStr}</div>
@@ -2529,8 +2560,8 @@ function render(options = {}) {
           ${sourceBadge}
           ${badge}
           <div style="flex:1"></div>
-          <button class="remove-btn" onclick="removeFromTimeline(${id})" title="Remove">×</button>
-          <button class="btn btn-ghost" style="font-size:10px;padding:2px 5px;flex-shrink:0" onclick="openTimestampModal(${id})" title="Set timestamp">✎</button>
+          <button class="remove-btn" data-action="remove" title="Remove">×</button>
+          <button class="btn btn-ghost" data-action="edit-timestamp" style="font-size:10px;padding:2px 5px;flex-shrink:0" title="Set timestamp">✎</button>
         </div>
       </div>
     </div>${mkDropTarget(i + 1, 'line-end-target')}</div>`;
@@ -2562,6 +2593,11 @@ function mkDropTarget(idx, extraClass = '') {
 // Initial setup
 document.addEventListener('click', hideCardContextMenu);
 document.addEventListener('scroll', hideCardContextMenu, true);
+document.getElementById('poolGrid').addEventListener('click', onCardContainerClick);
+document.getElementById('timelineList').addEventListener('click', onCardContainerClick);
+document.getElementById('poolGrid').addEventListener('pointerdown', onCardContainerPointerDown);
+document.getElementById('timelineList').addEventListener('pointerdown', onCardContainerPointerDown);
+document.getElementById('timelineList').addEventListener('contextmenu', onTimelineContextMenu);
 document.addEventListener('keydown', e => {
   if (document.getElementById('photoViewer').style.display !== 'none') {
     if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
