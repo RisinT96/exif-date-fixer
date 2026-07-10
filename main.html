@@ -296,6 +296,7 @@
   }
   .photo-card:hover { border-color: #3a3a50; background: #22222e; }
   .photo-card.dragging { opacity: 0.4; cursor: grabbing; }
+  .photo-card.selected { border-color: #8a90f0; box-shadow: 0 0 0 2px rgba(91,106,240,0.45); }
   .photo-card.anchored { border-top: 3px solid #4caf82; }
   .photo-card.interpolated { border-top: 3px solid #5b6af0; }
   .photo-card.unplaced-card { border-top: 3px solid #6a4a20; }
@@ -386,6 +387,7 @@
   }
   .pool-card:hover { border-color: #5b6af0; background: #22222e; }
   .pool-card.dragging { opacity: 0.3; }
+  .pool-card.selected { border-color: #8a90f0; box-shadow: 0 0 0 2px rgba(91,106,240,0.45); }
   .pool-thumb {
     width: 100%;
     height: 48px;
@@ -513,7 +515,7 @@
 
   <div class="timeline-area">
     <div class="timeline-toolbar">
-      <span>Drag photos onto the slim separators between images. Timestamps are <strong>interpolated automatically</strong> and your session is <strong>saved automatically</strong> in this browser.</span>
+      <span>Drag photos onto the slim separators between images. Use Ctrl/Cmd-click to select multiple photos, or Shift-click for a range. Timestamps are <strong>interpolated automatically</strong> and your session is <strong>saved automatically</strong> in this browser.</span>
     </div>
     <div class="timeline-scroll">
       <div class="timeline-list" id="timelineList"></div>
@@ -542,6 +544,8 @@ let timeline = [];   // ordered list of numeric id strings
 let unplaced = [];   // numeric id strings not yet in timeline
 let dragState = null;
 let modalTarget = null;
+let selectedIds = new Set();
+let selectionAnchor = null;
 
 const CAM1 = 'DSC';
 const CAM2 = '976A';
@@ -965,13 +969,65 @@ function fmtTime(d) {
   return d.toLocaleString('en-GB', { dateStyle: 'short', timeStyle: 'medium' });
 }
 
+function sourceIds(source) {
+  return source === 'timeline' ? timeline : unplaced;
+}
+
+function handleCardClick(e, id, source) {
+  if (e.target.closest('button')) return;
+  id = String(id);
+  const ids = sourceIds(source).map(String);
+  const additive = e.ctrlKey || e.metaKey;
+
+  // A selection belongs to one list. Clicking in the other list starts a new one.
+  if (selectionAnchor && selectionAnchor.source !== source) {
+    selectedIds.clear();
+    selectionAnchor = null;
+  }
+
+  if (e.shiftKey) {
+    const anchor = selectionAnchor?.source === source ? selectionAnchor.id : id;
+    const a = ids.indexOf(String(anchor));
+    const b = ids.indexOf(id);
+    if (a >= 0 && b >= 0) {
+      if (!additive) selectedIds.clear();
+      const start = Math.min(a, b);
+      const end = Math.max(a, b);
+      for (let i = start; i <= end; i++) selectedIds.add(ids[i]);
+    }
+  } else if (additive) {
+    if (selectedIds.has(id)) selectedIds.delete(id);
+    else selectedIds.add(id);
+    selectionAnchor = { source, id };
+  } else {
+    selectedIds.clear();
+    selectedIds.add(id);
+    selectionAnchor = { source, id };
+  }
+  render();
+}
+
+function selectedIdsInSource(source) {
+  const ids = sourceIds(source).map(String);
+  return ids.filter(id => selectedIds.has(id));
+}
+
 function onCardDragStart(e, id, source) {
-  dragState = { source, id: String(id) };
+  id = String(id);
+  if (!selectedIds.has(id) || selectionAnchor?.source !== source) {
+    selectedIds.clear();
+    selectedIds.add(id);
+    selectionAnchor = { source, id };
+  }
+  const ids = selectedIdsInSource(source);
+  dragState = { source, ids };
   e.dataTransfer.effectAllowed = 'move';
   setTimeout(() => {
     document.querySelectorAll('.drop-target').forEach(el => el.classList.add('active'));
   }, 0);
-  e.currentTarget.classList.add('dragging');
+  ids.forEach(selectedId => {
+    document.querySelector(`[data-photo-id="${selectedId}"]`)?.classList.add('dragging');
+  });
 }
 
 function onCardDragEnd(e) {
@@ -986,17 +1042,20 @@ function onDropTargetLeave(e) { e.currentTarget.classList.remove('hover'); }
 function onDropTargetDrop(e, insertIdx) {
   e.preventDefault();
   if (!dragState) return;
-  const { source, id } = dragState;
+  const { source, ids } = dragState;
+  if (!ids.length) return;
   if (source === 'pool') {
-    unplaced = unplaced.filter(x => x !== id);
-    photos[id].inTimeline = true;
-    timeline.splice(insertIdx, 0, id);
+    unplaced = unplaced.filter(x => !ids.includes(x));
+    ids.forEach(id => { photos[id].inTimeline = true; });
+    timeline.splice(insertIdx, 0, ...ids);
   } else if (source === 'timeline') {
-    const fromIdx = timeline.indexOf(id);
-    if (fromIdx < 0) return;
-    timeline.splice(fromIdx, 1);
-    const newIdx = fromIdx < insertIdx ? insertIdx - 1 : insertIdx;
-    timeline.splice(newIdx, 0, id);
+    const selected = new Set(ids);
+    const removedBeforeDrop = timeline
+      .slice(0, insertIdx)
+      .filter(id => selected.has(id)).length;
+    timeline = timeline.filter(id => !selected.has(id));
+    const newIdx = Math.max(0, Math.min(timeline.length, insertIdx - removedBeforeDrop));
+    timeline.splice(newIdx, 0, ...ids);
   }
   interpolateAll();
   render();
@@ -1072,6 +1131,7 @@ async function clearAll() {
   if (!Object.keys(photos).length) return;
   if (!confirm('Clear all photos and delete the saved session?')) return;
   photos = {}; estimatedAppBytes = 0; nextId = 0; timeline = []; unplaced = [];
+  selectedIds.clear(); selectionAnchor = null;
   await deleteSavedSession();
   setSessionStatus('Session cleared', 'warn');
   render();
@@ -1129,7 +1189,9 @@ function render() {
   } else {
     grid.innerHTML = unplaced.map(id => {
       const p = photos[id];
-      return `<div class="pool-card" draggable="true"
+      const selected = selectedIds.has(String(id)) ? ' selected' : '';
+      return `<div class="pool-card${selected}" draggable="true"
+        onclick="handleCardClick(event,${id},'pool')"
         ondragstart="onCardDragStart(event,${id},'pool')"
         ondragend="onCardDragEnd(event)"
         title="${p.name.replace(/"/g,'&quot;')}">
@@ -1168,6 +1230,7 @@ function render() {
     const isAnchor = p.timestamp && !p._interpolated;
     const isInterp = !!p._interpolated;
     const cardClass = isAnchor ? 'anchored' : isInterp ? 'interpolated' : 'unplaced-card';
+    const selectedClass = selectedIds.has(String(id)) ? ' selected' : '';
     const timeClass = isAnchor ? 'known' : isInterp ? 'interpolated' : '';
     const timeStr = dt ? fmtTime(dt.time) : 'No timestamp';
     const badge = isAnchor
@@ -1177,7 +1240,8 @@ function render() {
       ? `<span class="photo-badge badge-cam1">DSC</span>`
       : p.camera === CAM2
       ? `<span class="photo-badge badge-cam2">976A</span>` : '';
-    html += `<div class="photo-card ${cardClass}" data-photo-id="${id}" draggable="true"
+    html += `<div class="photo-card ${cardClass}${selectedClass}" data-photo-id="${id}" draggable="true"
+      onclick="handleCardClick(event,${id},'timeline')"
       ondragstart="onCardDragStart(event,${id},'timeline')"
       ondragend="onCardDragEnd(event)">
       <div class="photo-thumb">${p.thumbURL ? `<img src="${p.thumbURL}">` : '🖼'}</div>
