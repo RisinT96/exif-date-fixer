@@ -1189,19 +1189,28 @@ function moveSelectedTimeline(delta) {
   const ids = selectedIdsInSource('timeline');
   if (!ids.length) return false;
   const selected = new Set(ids);
-  const indexes = timeline
-    .map((id, index) => selected.has(id) ? index : -1)
-    .filter(index => index >= 0);
-  const minIndex = Math.min(...indexes);
-  const maxIndex = Math.max(...indexes);
-  if ((delta < 0 && minIndex === 0) || (delta > 0 && maxIndex === timeline.length - 1)) return false;
+  const moved = [...timeline];
 
+  // Swap selected photos with adjacent unselected photos. Iterating in the
+  // movement direction preserves gaps and moves each selected photo by one
+  // position rather than collapsing the selection into one block.
+  if (delta < 0) {
+    for (let i = 1; i < moved.length; i++) {
+      if (selected.has(moved[i]) && !selected.has(moved[i - 1])) {
+        [moved[i - 1], moved[i]] = [moved[i], moved[i - 1]];
+      }
+    }
+  } else {
+    for (let i = moved.length - 2; i >= 0; i--) {
+      if (selected.has(moved[i]) && !selected.has(moved[i + 1])) {
+        [moved[i], moved[i + 1]] = [moved[i + 1], moved[i]];
+      }
+    }
+  }
+
+  if (moved.every((id, index) => id === timeline[index])) return false;
   pushHistory();
-  timeline = timeline.filter(id => !selected.has(id));
-  const newIndex = delta < 0
-    ? minIndex - 1
-    : Math.min(timeline.length, maxIndex + 1);
-  timeline.splice(Math.max(0, newIndex), 0, ...ids);
+  timeline = moved;
   interpolateAll();
   render();
   return true;
