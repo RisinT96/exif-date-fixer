@@ -156,6 +156,26 @@
     word-break: break-word;
   }
 
+  .memory-status {
+    margin-top: 10px;
+    font-size: 11px;
+    color: #6a6670;
+  }
+  .memory-track {
+    height: 4px;
+    margin-top: 5px;
+    overflow: hidden;
+    border-radius: 999px;
+    background: #2e2e3a;
+  }
+  .memory-bar {
+    width: 0;
+    height: 100%;
+    border-radius: inherit;
+    background: #4caf82;
+    transition: width 0.2s ease, background 0.2s ease;
+  }
+
   .stats {
     font-size: 12px;
     color: #6a6670;
@@ -469,6 +489,10 @@
         </div>
         <div class="processing-errors" id="processingErrors"></div>
       </div>
+      <div class="memory-status" id="memoryStatus" title="Original image files are processed one at a time and are not retained by the app.">
+        <div id="memoryLabel">Memory estimate: calculating…</div>
+        <div class="memory-track" aria-hidden="true"><div class="memory-bar" id="memoryBar"></div></div>
+      </div>
     </div>
 
     <div class="sidebar-section">
@@ -536,6 +560,7 @@ const SESSION_KEY = 'current';
 let sessionReady = false;
 let saveTimer = null;
 let processingState = null;
+let estimatedAppBytes = 0;
 
 function updateProcessingProgress() {
   if (!processingState) return;
@@ -557,12 +582,41 @@ function updateProcessingProgress() {
   errorList.innerHTML = errors
     .map(error => `<div>${escapeHtml(error)}</div>`)
     .join('');
+  updateMemoryStatus();
 }
 
 function escapeHtml(value) {
   return String(value).replace(/[&<>"']/g, char => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
   }[char]));
+}
+
+function updateMemoryStatus() {
+  const label = document.getElementById('memoryLabel');
+  const bar = document.getElementById('memoryBar');
+  if (!label || !bar) return;
+
+  const appMB = estimatedAppBytes / (1024 * 1024);
+  const browserMemory = performance.memory;
+  if (browserMemory && Number.isFinite(browserMemory.usedJSHeapSize)) {
+    const usedMB = browserMemory.usedJSHeapSize / (1024 * 1024);
+    const limitMB = browserMemory.jsHeapSizeLimit / (1024 * 1024);
+    const percent = limitMB ? Math.min(100, (usedMB / limitMB) * 100) : 0;
+    label.textContent = `Memory estimate: ${appMB.toFixed(1)} MB app data · ${usedMB.toFixed(0)} MB tab heap`;
+    bar.style.width = `${percent}%`;
+    bar.style.background = percent > 80 ? '#e05a5a' : percent > 60 ? '#c87a30' : '#4caf82';
+    return;
+  }
+
+  // performance.memory is Chromium-only. The 256 MB scale is visual only.
+  bar.style.width = `${Math.min(100, (appMB / 256) * 100)}%`;
+  bar.style.background = appMB > 192 ? '#e05a5a' : appMB > 128 ? '#c87a30' : '#4caf82';
+  label.textContent = `Memory estimate: ${appMB.toFixed(1)} MB app data`;
+}
+
+function estimatePhotoBytes(photo) {
+  // JavaScript strings are approximately two bytes per character.
+  return (photo.name?.length || 0) * 2 + (photo.thumbURL?.length || 0) * 2 + 512;
 }
 
 function detectCamera(name) {
@@ -643,6 +697,7 @@ function buildSessionState() {
 
 function restoreSessionState(state) {
   photos = {};
+  estimatedAppBytes = 0;
   nextId = Number(state.nextId) || 0;
   timeline = Array.isArray(state.timeline) ? state.timeline.map(String) : [];
   unplaced = Array.isArray(state.unplaced) ? state.unplaced.map(String) : [];
@@ -657,6 +712,7 @@ function restoreSessionState(state) {
       inTimeline: !!p.inTimeline,
       _interpolated: null
     };
+    estimatedAppBytes += estimatePhotoBytes(photos[id]);
   }
 
   timeline = timeline.filter(id => photos[id]);
@@ -818,6 +874,7 @@ async function handleFiles(files) {
     const thumbURL = await makeThumbnail(file);
     const camera = detectCamera(file.name);
     photos[id] = { id, name: file.name, camera, timestamp, thumbURL, inTimeline: false, _interpolated: null };
+    estimatedAppBytes += estimatePhotoBytes(photos[id]);
     if (timestamp) {
       timeline.push(id);
       photos[id].inTimeline = true;
@@ -1014,7 +1071,7 @@ function csvCell(value) {
 async function clearAll() {
   if (!Object.keys(photos).length) return;
   if (!confirm('Clear all photos and delete the saved session?')) return;
-  photos = {}; nextId = 0; timeline = []; unplaced = [];
+  photos = {}; estimatedAppBytes = 0; nextId = 0; timeline = []; unplaced = [];
   await deleteSavedSession();
   setSessionStatus('Session cleared', 'warn');
   render();
@@ -1054,6 +1111,7 @@ function animateTimelineCards(oldRects) {
 
 function render() {
   const oldTimelineRects = getTimelineCardRects();
+  updateMemoryStatus();
   // Stats
   const total = Object.keys(photos).length;
   const anchored = Object.values(photos).filter(p => p.timestamp && !p._interpolated).length;
