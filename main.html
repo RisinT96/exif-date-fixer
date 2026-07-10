@@ -306,6 +306,45 @@
   .timeline-list.dragging .drop-target::before {
     background: #4a4a5a;
   }
+  .drop-indicator {
+    position: fixed;
+    z-index: 150;
+    width: 4px;
+    min-height: 28px;
+    border-radius: 999px;
+    background: #8a90f0;
+    box-shadow: 0 0 14px rgba(138,144,240,0.8);
+    pointer-events: none;
+  }
+  .drag-ghost {
+    position: fixed;
+    z-index: 250;
+    width: 150px;
+    padding: 6px;
+    border: 1px solid #5b6af0;
+    border-radius: 8px;
+    background: #1e1e28;
+    pointer-events: none;
+    opacity: 0.9;
+    transform: rotate(2deg);
+    box-shadow: 0 14px 34px rgba(0,0,0,0.45);
+  }
+  .drag-ghost img {
+    display: block;
+    width: 100%;
+    height: 92px;
+    object-fit: contain;
+    background: #1e1e28;
+  }
+  .drag-ghost span {
+    display: block;
+    margin-top: 5px;
+    overflow: hidden;
+    color: #c8c4be;
+    font-size: 11px;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
   .drop-target.hover {
     width: 12px;
     flex-basis: 12px;
@@ -363,7 +402,11 @@
     overflow: hidden;
     flex-shrink: 0;
   }
-  .photo-thumb img { width: 100%; height: 100%; object-fit: contain; }
+  .photo-thumb img {
+    width: 100%; height: 100%; object-fit: contain;
+    -webkit-user-drag: none;
+    user-drag: none;
+  }
 
   .photo-thumb { cursor: zoom-in; }
 
@@ -458,7 +501,11 @@
     overflow: hidden;
     min-width: 0;
   }
-  .pool-thumb img { width: 100%; height: 100%; object-fit: contain; }
+  .pool-thumb img {
+    width: 100%; height: 100%; object-fit: contain;
+    -webkit-user-drag: none;
+    user-drag: none;
+  }
   .pool-name { font-size: 11px; color: #8a8690; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .sort-select {
     width: 100%;
@@ -668,6 +715,7 @@
     </div>
     <div class="timeline-scroll">
       <div class="timeline-list" id="timelineList"></div>
+      <div class="drop-indicator" id="dropIndicator" style="display:none" aria-hidden="true"></div>
     </div>
   </div>
 </div>
@@ -726,6 +774,8 @@ let selectionAnchor = null;
 let unplacedSortMode = 'name';
 let viewerObjectURL = null;
 let viewerPhotoId = null;
+let pointerDrag = null;
+let suppressCardClick = false;
 
 const CAM1 = 'DSC';
 const CAM2 = '976A';
@@ -1443,6 +1493,10 @@ function sourceIds(source) {
 
 // ── SELECTION, DRAGGING, AND INCREMENTAL DOM UPDATES ───────────────────────
 function handleCardClick(e, id, source) {
+  if (suppressCardClick) {
+    suppressCardClick = false;
+    return;
+  }
   if (e.target.closest('button')) return;
   id = String(id);
   const ids = sourceIds(source).map(String);
@@ -1589,10 +1643,9 @@ function refreshTimelineCards(ids) {
 function poolCardMarkup(id) {
   const photo = photos[id];
   const selected = selectedIds.has(String(id)) ? ' selected' : '';
-  return `<div class="pool-card${selected}" data-photo-id="${id}" draggable="true"
+  return `<div class="pool-card${selected}" data-photo-id="${id}"
     onclick="handleCardClick(event,${id},'pool')"
-    ondragstart="onCardDragStart(event,${id},'pool')"
-    ondragend="onCardDragEnd(event)"
+    onpointerdown="onCardPointerDown(event,${id},'pool')"
     title="${photo.name.replace(/"/g,'&quot;')}">
     <div class="pool-thumb" onclick="openPhotoViewer(event,${id})">${photo.thumbURL ? `<img src="${photo.thumbURL}" loading="lazy" decoding="async" alt="">` : '🖼'}</div>
     <div class="pool-name">${photo.name}</div>
@@ -1612,11 +1665,10 @@ function timelineEntryMarkup(id) {
     ? `<span class="photo-badge badge-anchor">ANCHOR</span>`
     : isInterp ? `<span class="photo-badge badge-interp">~</span>` : '';
   const sourceBadge = sourceBadgeMarkup(photo, isAnchor);
-  return `<div class="timeline-entry">${mkDropTarget(0)}<div class="photo-card ${cardClass}${selectedClass}" data-photo-id="${id}" draggable="true"
+  return `<div class="timeline-entry">${mkDropTarget(0)}<div class="photo-card ${cardClass}${selectedClass}" data-photo-id="${id}"
     onclick="handleCardClick(event,${id},'timeline')"
     oncontextmenu="openCardContextMenu(event,${id},'timeline')"
-    ondragstart="onCardDragStart(event,${id},'timeline')"
-    ondragend="onCardDragEnd(event)">
+    onpointerdown="onCardPointerDown(event,${id},'timeline')">
     <div class="photo-thumb" onclick="openPhotoViewer(event,${id})">${photo.thumbURL ? `<img src="${photo.thumbURL}" loading="lazy" decoding="async" alt="">` : '🖼'}</div>
     <div class="photo-footer">
       <div class="photo-name">${photo.name}</div>
@@ -1877,30 +1929,166 @@ function moveSelectedTimeline(delta) {
   return true;
 }
 
-function onCardDragStart(e, id, source) {
-  id = String(id);
+function onCardPointerDown(event, id, source) {
+  if (event.button !== 0 || event.target.closest('button')) return;
+  pointerDrag = {
+    id: String(id), source, pointerId: event.pointerId,
+    startX: event.clientX, startY: event.clientY,
+    active: false, dropTarget: null, card: event.currentTarget, ghost: null
+  };
+  document.addEventListener('pointermove', onPointerDragMove, { passive: false });
+  document.addEventListener('pointerup', onPointerDragEnd);
+  document.addEventListener('pointercancel', cancelPointerDrag);
+}
+
+function beginPointerDrag(event) {
+  const { id, source } = pointerDrag;
   if (!selectedIds.has(id) || selectionAnchor?.source !== source) {
     selectedIds.clear();
     selectedIds.add(id);
     selectionAnchor = { source, id };
+    updateSelectionUI();
   }
-  const ids = selectedIdsInSource(source);
-  dragState = { source, ids };
-  e.dataTransfer.effectAllowed = 'move';
+  dragState = { source, ids: selectedIdsInSource(source) };
+  pointerDrag.active = true;
+  pointerDrag.dropZones = buildDropZones();
+  const ghost = createDragGhost(id);
+  document.body.appendChild(ghost);
+  pointerDrag.ghost = ghost;
+  moveDragGhost(event);
   document.getElementById('timelineList').classList.add('dragging');
-  ids.forEach(selectedId => {
+  dragState.ids.forEach(selectedId => {
     document.querySelector(`[data-photo-id="${selectedId}"]`)?.classList.add('dragging');
   });
+  event.preventDefault();
 }
 
-function onCardDragEnd(e) {
+function onPointerDragMove(event) {
+  if (!pointerDrag || event.pointerId !== pointerDrag.pointerId) return;
+  if (!pointerDrag.active) {
+    const distance = Math.hypot(event.clientX - pointerDrag.startX, event.clientY - pointerDrag.startY);
+    if (distance < 6) return;
+    beginPointerDrag(event);
+  }
+  event.preventDefault();
+  moveDragGhost(event);
+  const target = getDropTargetAtPoint(event.clientX, event.clientY);
+  pointerDrag.dropTarget = target || null;
+  if (target) positionDropIndicator(target);
+  else hideDropIndicator();
+}
+
+function onPointerDragEnd(event) {
+  if (!pointerDrag || event.pointerId !== pointerDrag.pointerId) return;
+  const { active, dropTarget } = pointerDrag;
+  if (active) {
+    suppressCardClick = true;
+    setTimeout(() => { suppressCardClick = false; }, 0);
+    if (dropTarget) onDropTargetDrop({ preventDefault() {}, currentTarget: dropTarget });
+  }
+  finishPointerDrag();
+}
+
+function cancelPointerDrag() {
+  if (!pointerDrag) return;
+  finishPointerDrag();
+}
+
+function finishPointerDrag() {
+  pointerDrag?.ghost?.remove();
+  pointerDrag = null;
   dragState = null;
+  document.removeEventListener('pointermove', onPointerDragMove);
+  document.removeEventListener('pointerup', onPointerDragEnd);
+  document.removeEventListener('pointercancel', cancelPointerDrag);
   document.getElementById('timelineList').classList.remove('dragging');
+  hideDropIndicator();
   document.querySelectorAll('.dragging').forEach(el => el.classList.remove('dragging'));
+}
+
+function moveDragGhost(event) {
+  if (!pointerDrag?.ghost) return;
+  pointerDrag.ghost.style.left = `${Math.round(event.clientX + 14)}px`;
+  pointerDrag.ghost.style.top = `${Math.round(event.clientY + 14)}px`;
+}
+
+function createDragGhost(id) {
+  const photo = photos[id];
+  const ghost = document.createElement('div');
+  ghost.className = 'drag-ghost';
+  ghost.innerHTML = `${photo.thumbURL ? `<img src="${photo.thumbURL}" alt="">` : ''}<span>${escapeHtml(photo.name)}</span>`;
+  return ghost;
+}
+
+function getDropTargetAtPoint(x, y) {
+  return findSeparatorNearPoint(x, y);
+}
+
+function buildDropZones() {
+  const entries = [...document.querySelectorAll('#timelineList .timeline-entry')];
+  const zones = [];
+  entries.forEach((entry, index) => {
+    const card = entry.querySelector('.photo-card[data-photo-id]');
+    const target = entry.querySelector('.drop-target:not(.line-end-target)');
+    if (!card || !target) return;
+    const cardRect = card.getBoundingClientRect();
+    const targetRect = target.getBoundingClientRect();
+    const previousEntry = entries[index - 1];
+    const previousCard = previousEntry?.querySelector('.photo-card[data-photo-id]');
+    const sameRow = previousEntry && previousEntry.offsetTop === entry.offsetTop;
+    const previousRect = sameRow ? previousCard?.getBoundingClientRect() : null;
+    zones.push({
+      target,
+      rect: targetRect,
+      left: previousRect ? previousRect.left + previousRect.width * 0.7 : targetRect.left - 16,
+      right: cardRect.left + cardRect.width * 0.3
+    });
+
+    const lineEndTarget = entry.querySelector('.line-end-target.line-end');
+    if (lineEndTarget) {
+      const lineEndRect = lineEndTarget.getBoundingClientRect();
+      zones.push({
+        target: lineEndTarget,
+        rect: lineEndRect,
+        left: cardRect.left + cardRect.width * 0.7,
+        right: lineEndRect.right + 16
+      });
+    }
+  });
+  return zones;
+}
+
+function findSeparatorNearPoint(x, y) {
+  let nearest = null;
+  let nearestDistance = Infinity;
+  for (const { target, rect, left, right } of pointerDrag?.dropZones || []) {
+    if (y < rect.top || y > rect.bottom || x < left || x > right) continue;
+    const distance = Math.abs(x - (rect.left + rect.width / 2));
+    if (distance < nearestDistance) {
+      nearest = target;
+      nearestDistance = distance;
+    }
+  }
+  return nearest;
+}
+
+function positionDropIndicator(target) {
+  const rect = target.getBoundingClientRect();
+  const indicator = document.getElementById('dropIndicator');
+  indicator.style.left = `${Math.round(rect.left + (rect.width - 4) / 2)}px`;
+  indicator.style.top = `${Math.round(rect.top + 8)}px`;
+  indicator.style.height = `${Math.max(28, Math.round(rect.height - 16))}px`;
+  indicator.style.display = 'block';
+}
+
+function hideDropIndicator() {
+  const indicator = document.getElementById('dropIndicator');
+  if (indicator) indicator.style.display = 'none';
 }
 
 function onDropTargetDrop(e, insertIdx) {
   e.preventDefault();
+  hideDropIndicator();
   if (!dragState) return;
   if (insertIdx == null) {
     const target = e.currentTarget;
@@ -2116,6 +2304,10 @@ function closeDryRunSummary() {
 // ── FULL-SCREEN VIEWER ─────────────────────────────────────────────────────
 // Object URLs exist only while the viewer is open and are revoked on close.
 function openPhotoViewer(event, id) {
+  if (suppressCardClick) {
+    suppressCardClick = false;
+    return;
+  }
   event?.stopPropagation();
   const photoId = String(id);
   const photo = photos[photoId];
@@ -2278,10 +2470,9 @@ function render(options = {}) {
       grid.innerHTML = unplaced.map(id => {
         const p = photos[id];
         const selected = selectedIds.has(String(id)) ? ' selected' : '';
-        return `<div class="pool-card${selected}" data-photo-id="${id}" draggable="true"
+        return `<div class="pool-card${selected}" data-photo-id="${id}"
           onclick="handleCardClick(event,${id},'pool')"
-          ondragstart="onCardDragStart(event,${id},'pool')"
-          ondragend="onCardDragEnd(event)"
+          onpointerdown="onCardPointerDown(event,${id},'pool')"
           title="${p.name.replace(/"/g,'&quot;')}">
           <div class="pool-thumb" onclick="openPhotoViewer(event,${id})">${p.thumbURL ? `<img src="${p.thumbURL}" loading="lazy" decoding="async" alt="">` : '🖼'}</div>
           <div class="pool-name">${p.name}</div>
@@ -2326,11 +2517,10 @@ function render(options = {}) {
       ? `<span class="photo-badge badge-anchor">ANCHOR</span>`
       : isInterp ? `<span class="photo-badge badge-interp">~</span>` : '';
     const sourceBadge = sourceBadgeMarkup(p, isAnchor);
-    html += `<div class="timeline-entry">${mkDropTarget(i)}<div class="photo-card ${cardClass}${selectedClass}" data-photo-id="${id}" draggable="true"
+    html += `<div class="timeline-entry">${mkDropTarget(i)}<div class="photo-card ${cardClass}${selectedClass}" data-photo-id="${id}"
       onclick="handleCardClick(event,${id},'timeline')"
       oncontextmenu="openCardContextMenu(event,${id},'timeline')"
-      ondragstart="onCardDragStart(event,${id},'timeline')"
-      ondragend="onCardDragEnd(event)">
+      onpointerdown="onCardPointerDown(event,${id},'timeline')">
       <div class="photo-thumb" onclick="openPhotoViewer(event,${id})">${p.thumbURL ? `<img src="${p.thumbURL}" loading="lazy" decoding="async" alt="">` : '🖼'}</div>
       <div class="photo-footer">
         <div class="photo-name">${p.name}</div>
@@ -2364,9 +2554,7 @@ function updateTimelineLineEnds() {
 
 function mkDropTarget(idx, extraClass = '') {
   return `<div class="drop-target ${extraClass}"
-    ondragover="event.preventDefault()"
     data-drop-index="${idx}"
-    ondrop="onDropTargetDrop(event)"
     title="Drop here"
     aria-label="Drop photo here"></div>`;
 }
