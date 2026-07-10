@@ -240,6 +240,20 @@
     align-items: stretch;
   }
 
+  /* Keep each leading separator attached to its photo when flex rows wrap. */
+  .timeline-entry {
+    display: flex;
+    align-items: stretch;
+    column-gap: 4px;
+    flex: 0 0 176px; /* separator (12) + gap (4) + photo card (160) */
+    min-width: 176px;
+    position: relative;
+  }
+  .timeline-end-entry {
+    flex: 0 0 12px;
+    min-width: 12px;
+  }
+
   .drop-target {
     width: 12px;
     min-height: 214px;
@@ -254,6 +268,13 @@
     flex: 0 0 12px;
     position: relative;
   }
+  .line-end-target {
+    display: none;
+    position: absolute;
+    left: 176px;
+    top: 0;
+  }
+  .line-end-target.line-end { display: flex; }
   .drop-target::before {
     content: '';
     width: 2px;
@@ -1291,7 +1312,7 @@ function render() {
     return;
   }
 
-  let html = mkDropTarget(0);
+  let html = '';
   timeline.forEach((id, i) => {
     const p = photos[id];
     const dt = getDisplayTime(p);
@@ -1308,7 +1329,7 @@ function render() {
       ? `<span class="photo-badge badge-cam1">DSC</span>`
       : p.camera === CAM2
       ? `<span class="photo-badge badge-cam2">976A</span>` : '';
-    html += `<div class="photo-card ${cardClass}${selectedClass}" data-photo-id="${id}" draggable="true"
+    html += `<div class="timeline-entry">${mkDropTarget(i)}<div class="photo-card ${cardClass}${selectedClass}" data-photo-id="${id}" draggable="true"
       onclick="handleCardClick(event,${id},'timeline')"
       oncontextmenu="openCardContextMenu(event,${id},'timeline')"
       ondragstart="onCardDragStart(event,${id},'timeline')"
@@ -1325,17 +1346,27 @@ function render() {
           <button class="btn btn-ghost" style="font-size:10px;padding:2px 5px;flex-shrink:0" onclick="openTimestampModal(${id})" title="Set timestamp">✎</button>
         </div>
       </div>
-    </div>` + mkDropTarget(i + 1);
+    </div>${mkDropTarget(i + 1, 'line-end-target')}</div>`;
   });
 
   list.innerHTML = html;
+  updateTimelineLineEnds();
   document.getElementById('exportBtn').disabled = false;
   animateTimelineCards(oldTimelineRects);
   scheduleSessionSave();
 }
 
-function mkDropTarget(idx) {
-  return `<div class="drop-target"
+function updateTimelineLineEnds() {
+  const entries = [...document.querySelectorAll('#timelineList .timeline-entry')];
+  entries.forEach((entry, index) => {
+    const next = entries[index + 1];
+    const isLineEnd = !next || next.offsetTop > entry.offsetTop;
+    entry.querySelector('.line-end-target')?.classList.toggle('line-end', isLineEnd);
+  });
+}
+
+function mkDropTarget(idx, extraClass = '') {
+  return `<div class="drop-target ${extraClass}"
     ondragover="event.preventDefault(); onDropTargetEnter(event)"
     ondragleave="onDropTargetLeave(event)"
     ondrop="onDropTargetDrop(event,${idx})"
@@ -1349,6 +1380,7 @@ document.addEventListener('scroll', hideCardContextMenu, true);
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape') hideCardContextMenu();
 });
+window.addEventListener('resize', updateTimelineLineEnds);
 document.getElementById('fileInput').addEventListener('change', async function() {
   await handleFiles(this.files);
   this.value = ''; // release the picker references after processing the batch
