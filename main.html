@@ -671,6 +671,7 @@
     <p id="modalDesc">Enter the capture time for this photo. It will act as an anchor for interpolation.</p>
     <input type="datetime-local" id="modalInput" min="1970-01-01T00:00:00" max="2100-12-31T23:59:59" step="1">
     <div class="modal-actions">
+      <button class="btn btn-ghost" id="removeManualAnchorBtn" onclick="removeManualAnchors()" style="display:none">Remove Manual Anchor</button>
       <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
       <button class="btn btn-primary" id="confirmTimestampBtn" onclick="confirmTimestamp()">Set Anchor</button>
     </div>
@@ -868,6 +869,8 @@ function captureEditorState() {
     photoState[id] = {
       timestamp: photo.timestamp ? new Date(photo.timestamp.getTime()) : null,
       timestampSource: photo.timestampSource || null,
+      preManualTimestamp: photo.preManualTimestamp ? new Date(photo.preManualTimestamp.getTime()) : null,
+      preManualTimestampSource: photo.preManualTimestampSource || null,
       inTimeline: !!photo.inTimeline,
       _interpolated: photo._interpolated ? new Date(photo._interpolated.getTime()) : null
     };
@@ -895,6 +898,7 @@ function restoreEditorState(state) {
   nextId = state.nextId;
   timeline = [...state.timeline];
   unplaced = [...state.unplaced];
+  interpolateAll();
   recalculateEstimatedAppBytes();
   selectedIds.clear();
   selectionAnchor = null;
@@ -916,9 +920,11 @@ function restoreEditorState(state) {
       return !before || !after
         || !datesEqual(before.timestamp, after.timestamp)
         || before.timestampSource !== after.timestampSource
+        || !datesEqual(before.preManualTimestamp, after.preManualTimestamp)
+        || before.preManualTimestampSource !== after.preManualTimestampSource
         || !datesEqual(before._interpolated, after._interpolated);
     }));
-    changedIds.forEach(refreshTimelineCardDisplay);
+    changedIds.forEach(id => refreshTimelineCardDisplay(id));
     updateMemoryStatus();
     updateStats();
     updateHistoryButtons();
@@ -1042,6 +1048,8 @@ function buildSessionState() {
       camera: p.camera,
       timestamp: dateToLocalStamp(p.timestamp),
       timestampSource: p.timestampSource || null,
+      preManualTimestamp: dateToLocalStamp(p.preManualTimestamp),
+      preManualTimestampSource: p.preManualTimestampSource || null,
       modifiedTime: p.modifiedTime || 0,
       sourceSize: Number.isFinite(p.sourceSize) ? p.sourceSize : null,
       sourceFingerprint: p.sourceFingerprint || null,
@@ -1076,6 +1084,8 @@ function restoreSessionState(state) {
       camera: p.camera || detectCamera(p.name || ''),
       timestamp: localStampToDate(p.timestamp),
       timestampSource: p.timestampSource || (p.timestamp ? 'exif' : null),
+      preManualTimestamp: localStampToDate(p.preManualTimestamp),
+      preManualTimestampSource: p.preManualTimestampSource || null,
       modifiedTime: Number(p.modifiedTime) || 0,
       sourceSize: Number.isFinite(p.sourceSize) ? p.sourceSize : null,
       sourceFingerprint: p.sourceFingerprint || null,
@@ -1546,12 +1556,19 @@ function refreshTimelineCardDisplay(id, card = null) {
   actions.querySelectorAll('.photo-badge').forEach(badge => badge.remove());
   const spacer = actions.querySelector('div[style*="flex:1"]');
   if (!spacer) return;
-  const sourceBadge = isAnchor && photo.timestampSource
-    ? `<span class="photo-badge badge-source" title="Timestamp source">${photo.timestampSource.toUpperCase()}</span>` : '';
+  const sourceBadge = sourceBadgeMarkup(photo, isAnchor);
   const badge = isAnchor
     ? `<span class="photo-badge badge-anchor">ANCHOR</span>`
     : isInterp ? `<span class="photo-badge badge-interp">~</span>` : '';
   spacer.insertAdjacentHTML('beforebegin', sourceBadge + badge);
+}
+
+function sourceBadgeMarkup(photo, isAnchor) {
+  if (!isAnchor || !photo.timestampSource) return '';
+  const isManual = photo.timestampSource === 'manual';
+  const label = isManual ? 'M' : photo.timestampSource.toUpperCase();
+  const title = isManual ? 'Manual timestamp' : 'Timestamp source';
+  return `<span class="photo-badge badge-source" title="${title}">${label}</span>`;
 }
 
 function refreshTimelineCards(ids) {
@@ -1587,8 +1604,7 @@ function timelineEntryMarkup(id) {
   const badge = isAnchor
     ? `<span class="photo-badge badge-anchor">ANCHOR</span>`
     : isInterp ? `<span class="photo-badge badge-interp">~</span>` : '';
-  const sourceBadge = isAnchor && photo.timestampSource
-    ? `<span class="photo-badge badge-source" title="Timestamp source">${photo.timestampSource.toUpperCase()}</span>` : '';
+  const sourceBadge = sourceBadgeMarkup(photo, isAnchor);
   return `<div class="timeline-entry">${mkDropTarget(0)}<div class="photo-card ${cardClass}${selectedClass}" data-photo-id="${id}" draggable="true"
     onclick="handleCardClick(event,${id},'timeline')"
     oncontextmenu="openCardContextMenu(event,${id},'timeline')"
@@ -1951,6 +1967,10 @@ function openTimestampModal(id) {
     ? `The entered time will be applied to all selected photos.`
     : `Enter the exact capture time. This photo will become an anchor for interpolation.`;
   document.getElementById('confirmTimestampBtn').textContent = multiple ? 'Set Timestamps' : 'Set Anchor';
+  const manualCount = modalTargets.filter(targetId => photos[targetId]?.timestampSource === 'manual').length;
+  const removeButton = document.getElementById('removeManualAnchorBtn');
+  removeButton.style.display = manualCount ? 'inline-block' : 'none';
+  removeButton.textContent = manualCount > 1 ? 'Remove Manual Anchors' : 'Remove Manual Anchor';
   const existing = p.timestamp;
   if (existing) {
     const local = new Date(existing.getTime() - existing.getTimezoneOffset() * 60000);
@@ -1965,6 +1985,19 @@ function closeModal() {
   document.getElementById('tsModal').style.display = 'none';
   modalTargets = [];
   document.getElementById('confirmTimestampBtn').textContent = 'Set Anchor';
+  document.getElementById('removeManualAnchorBtn').style.display = 'none';
+}
+
+function refreshAfterTimestampChange(changedTimelineIds, changedPoolPhoto) {
+  interpolateAll();
+  // A changed anchor can alter any interpolation, but card structure remains
+  // stable, so update the existing timeline cards instead of rebuilding them.
+  if (changedTimelineIds.length) refreshTimelineCards(timeline);
+  if (changedPoolPhoto && unplacedSortMode === 'capture') reconcilePoolCards();
+  updateMemoryStatus();
+  updateHistoryButtons();
+  updateStats();
+  scheduleSessionSave();
 }
 
 function confirmTimestamp() {
@@ -1972,13 +2005,41 @@ function confirmTimestamp() {
   if (!val || !modalTargets.length) { closeModal(); return; }
   pushHistory();
   const timestamp = new Date(val);
+  const changedTimelineIds = [];
+  let changedPoolPhoto = false;
   for (const id of modalTargets) {
-    photos[id].timestamp = new Date(timestamp.getTime());
-    photos[id].timestampSource = 'manual';
-    photos[id]._interpolated = null;
+    const photo = photos[id];
+    if (photo.timestampSource !== 'manual') {
+      photo.preManualTimestamp = photo.timestamp ? new Date(photo.timestamp.getTime()) : null;
+      photo.preManualTimestampSource = photo.timestampSource || null;
+    }
+    photo.timestamp = new Date(timestamp.getTime());
+    photo.timestampSource = 'manual';
+    photo._interpolated = null;
+    if (photo.inTimeline) changedTimelineIds.push(id);
+    else changedPoolPhoto = true;
   }
-  interpolateAll();
-  render();
+  refreshAfterTimestampChange(changedTimelineIds, changedPoolPhoto);
+  closeModal();
+}
+
+function removeManualAnchors() {
+  const manualIds = modalTargets.filter(id => photos[id]?.timestampSource === 'manual');
+  if (!manualIds.length) { closeModal(); return; }
+  pushHistory();
+  const changedTimelineIds = [];
+  let changedPoolPhoto = false;
+  for (const id of manualIds) {
+    const photo = photos[id];
+    photo.timestamp = photo.preManualTimestamp ? new Date(photo.preManualTimestamp.getTime()) : null;
+    photo.timestampSource = photo.preManualTimestampSource || null;
+    photo.preManualTimestamp = null;
+    photo.preManualTimestampSource = null;
+    photo._interpolated = null;
+    if (photo.inTimeline) changedTimelineIds.push(id);
+    else changedPoolPhoto = true;
+  }
+  refreshAfterTimestampChange(changedTimelineIds, changedPoolPhoto);
   closeModal();
 }
 
@@ -2257,8 +2318,7 @@ function render(options = {}) {
     const badge = isAnchor
       ? `<span class="photo-badge badge-anchor">ANCHOR</span>`
       : isInterp ? `<span class="photo-badge badge-interp">~</span>` : '';
-    const sourceBadge = isAnchor && p.timestampSource
-      ? `<span class="photo-badge badge-source" title="Timestamp source">${p.timestampSource.toUpperCase()}</span>` : '';
+    const sourceBadge = sourceBadgeMarkup(p, isAnchor);
     html += `<div class="timeline-entry">${mkDropTarget(i)}<div class="photo-card ${cardClass}${selectedClass}" data-photo-id="${id}" draggable="true"
       onclick="handleCardClick(event,${id},'timeline')"
       oncontextmenu="openCardContextMenu(event,${id},'timeline')"
