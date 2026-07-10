@@ -1326,6 +1326,16 @@ function sourceMatchesPhoto(photo, file, identity) {
   return Number(photo.modifiedTime) === Number(file.lastModified);
 }
 
+function insertAnchorIntoTimeline(id) {
+  const timestamp = photos[id]?.timestamp?.getTime();
+  if (!Number.isFinite(timestamp)) return;
+  const insertAt = timeline.findIndex(existingId => {
+    const display = getDisplayTime(photos[existingId]);
+    return display && display.time.getTime() > timestamp;
+  });
+  timeline.splice(insertAt < 0 ? timeline.length : insertAt, 0, id);
+}
+
 // Files are processed serially. Persistent thumbnails are small; source files
 // stay lazy and are read only when opened in the full-screen viewer.
 async function handleFiles(files) {
@@ -1382,8 +1392,8 @@ async function handleFiles(files) {
     photos[id] = { id, name: file.name, camera, timestamp, timestampSource, modifiedTime: file.lastModified || 0, sourceSize: sourceIdentity.sourceSize, sourceFingerprint: sourceIdentity.sourceFingerprint, thumbURL, sourceFile: file, inTimeline: false, _interpolated: null };
     estimatedAppBytes += estimatePhotoBytes(photos[id]);
     if (timestamp) {
-      timeline.push(id);
       photos[id].inTimeline = true;
+      insertAnchorIntoTimeline(id);
     } else {
       unplaced.push(id);
     }
@@ -1394,12 +1404,6 @@ async function handleFiles(files) {
 
   processingState.active = false;
   updateProcessingProgress();
-
-  timeline.sort((a, b) => {
-    const ta = photos[a].timestamp, tb = photos[b].timestamp;
-    if (ta && tb) return ta - tb;
-    return 0;
-  });
 
   sortUnplacedByName();
   interpolateAll();
