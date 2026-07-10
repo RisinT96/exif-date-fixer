@@ -758,6 +758,7 @@
   <div class="timeline-area">
     <div class="timeline-toolbar">
       <span>Drag photos into the timeline; once it contains photos, use the slim separators between images. Use Ctrl/Cmd-click to select multiple photos, or Shift-click for a range. Timestamps are <strong>interpolated automatically</strong> and your session is <strong>saved automatically</strong> in this browser.</span>
+      <button class="btn btn-ghost" type="button" onclick="reinterpolateAllPhotos()" title="Recalculate timestamps for all non-anchor photos">Re-interpolate</button>
     </div>
     <div class="timeline-scroll">
       <div class="timeline-list" id="timelineList"></div>
@@ -2149,6 +2150,12 @@ function finalizeIncrementalTransfer(refreshIds = timeline, animateIds = null) {
 }
 
 function getAffectedTimelineIds(previousTimeline, nextTimeline, movedIds) {
+  // Moving an anchor can change every interpolated value in the timeline if
+  // it crosses an anchor or changes the spacing of an anchor span. Refreshing
+  // all card displays is limited to anchor moves; normal photo reorders keep
+  // using the smaller affected range.
+  const anchorMoved = [...movedIds].some(id => isTimelineAnchor(id));
+  if (anchorMoved) return new Set([...previousTimeline, ...nextTimeline]);
   let start = Infinity;
   let end = -1;
   for (const id of movedIds) {
@@ -2186,9 +2193,24 @@ function getAnchorSpanIds(timelineIds, movedIds) {
   if (!positions.length) return new Set();
   let start = Math.min(...positions);
   let end = Math.max(...positions);
-  while (start > 0 && !isTimelineAnchor(timelineIds[start])) start--;
-  while (end < timelineIds.length - 1 && !isTimelineAnchor(timelineIds[end])) end++;
+  // Include the anchor immediately before and after the affected range. When
+  // the moved item is itself an anchor, both adjacent interpolation spans can
+  // change, so starting at the anchor alone is insufficient.
+  while (start > 0 && !isTimelineAnchor(timelineIds[start - 1])) start--;
+  if (start > 0) start--;
+  while (end < timelineIds.length - 1 && !isTimelineAnchor(timelineIds[end + 1])) end++;
+  if (end < timelineIds.length - 1) end++;
   return new Set(timelineIds.slice(start, end + 1));
+}
+
+function reinterpolateAllPhotos() {
+  if (!timeline.length) return;
+  pushHistory();
+  interpolateAll();
+  refreshTimelineCards(timeline);
+  updateMemoryStatus();
+  updateStats();
+  scheduleSessionSave();
 }
 
 function getTransferAffectedIds(previousTimeline, nextTimeline, movedIds) {
@@ -2255,7 +2277,7 @@ function moveSelectedTimeline(delta) {
   timeline = moved;
   interpolateAll();
   const affectedIds = getAffectedTimelineIds(previousTimeline, timeline, new Set(ids));
-  reorderTimelineDom(affectedIds);
+  reorderTimelineDom(affectedIds, new Set(ids));
   return true;
 }
 
@@ -2485,7 +2507,7 @@ function onDropTargetDrop(e, insertIdx) {
     timeline.splice(newIdx, 0, ...ids);
     interpolateAll();
     const affectedIds = getAffectedTimelineIds(previousTimeline, timeline, movedIds);
-    reorderTimelineDom(affectedIds);
+    reorderTimelineDom(affectedIds, new Set(ids));
     return;
   }
   interpolateAll();
