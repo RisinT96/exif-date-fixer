@@ -698,8 +698,9 @@ const CAM2 = '976A';
 const filenameCollator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
 
 function sortUnplacedByName() {
+  const timelineIds = new Set(timeline);
   unplaced = unplaced
-    .filter(id => photos[id] && !timeline.includes(id))
+    .filter(id => photos[id] && !timelineIds.has(id))
     .sort((a, b) => {
       const pa = photos[a], pb = photos[b];
       if (unplacedSortMode === 'capture') {
@@ -797,9 +798,13 @@ function captureEditorState() {
   const photoState = {};
   for (const [id, photo] of Object.entries(photos)) {
     const { sourceFile, ...persistablePhoto } = photo;
-    photoState[id] = persistablePhoto;
+    photoState[id] = {
+      ...persistablePhoto,
+      timestamp: photo.timestamp ? new Date(photo.timestamp.getTime()) : null,
+      _interpolated: photo._interpolated ? new Date(photo._interpolated.getTime()) : null
+    };
   }
-  return structuredClone({ photos: photoState, nextId, timeline, unplaced });
+  return { photos: photoState, nextId, timeline: [...timeline], unplaced: [...unplaced] };
 }
 
 function pushHistory() {
@@ -823,6 +828,11 @@ function restoreEditorState(state) {
   selectedIds.clear();
   selectionAnchor = null;
   render();
+}
+
+function updateSelectionUI() {
+  document.querySelectorAll('#timelineList .photo-card[data-photo-id], #poolGrid .pool-card[data-photo-id]')
+    .forEach(card => card.classList.toggle('selected', selectedIds.has(card.dataset.photoId)));
 }
 
 function updateHistoryButtons() {
@@ -954,14 +964,21 @@ function restoreSessionState(state) {
   }
 
   timeline = timeline.filter(id => photos[id]);
-  unplaced = unplaced.filter(id => photos[id] && !timeline.includes(id));
+  const timelineIds = new Set(timeline);
+  unplaced = unplaced.filter(id => photos[id] && !timelineIds.has(id));
+  const unplacedIds = new Set(unplaced);
 
   for (const id of Object.keys(photos)) {
-    if (!timeline.includes(id) && !unplaced.includes(id)) {
-      if (photos[id].inTimeline) timeline.push(id);
-      else unplaced.push(id);
+    if (!timelineIds.has(id) && !unplacedIds.has(id)) {
+      if (photos[id].inTimeline) {
+        timeline.push(id);
+        timelineIds.add(id);
+      } else {
+        unplaced.push(id);
+        unplacedIds.add(id);
+      }
     }
-    photos[id].inTimeline = timeline.includes(id);
+    photos[id].inTimeline = timelineIds.has(id);
   }
 
   const maxId = Object.keys(photos).reduce((max, id) => Math.max(max, Number(id) || 0), -1);
@@ -1205,17 +1222,28 @@ function handleFileDrop(e) {
 }
 
 function interpolateAll() {
+  const previousAnchors = new Array(timeline.length).fill(-1);
+  const nextAnchors = new Array(timeline.length).fill(-1);
+  let previousAnchor = -1;
+  for (let i = 0; i < timeline.length; i++) {
+    previousAnchors[i] = previousAnchor;
+    const photo = photos[timeline[i]];
+    if (photo.timestamp && !photo._interpolated) previousAnchor = i;
+  }
+  let nextAnchor = -1;
+  for (let i = timeline.length - 1; i >= 0; i--) {
+    nextAnchors[i] = nextAnchor;
+    const photo = photos[timeline[i]];
+    if (photo.timestamp && !photo._interpolated) nextAnchor = i;
+  }
+  const gap = estimateGap();
+
   for (let i = 0; i < timeline.length; i++) {
     const p = photos[timeline[i]];
     if (p.timestamp && !p._interpolated) { p._interpolated = null; continue; }
 
-    let prevIdx = -1, nextIdx = -1;
-    for (let j = i - 1; j >= 0; j--) {
-      if (photos[timeline[j]].timestamp && !photos[timeline[j]]._interpolated) { prevIdx = j; break; }
-    }
-    for (let j = i + 1; j < timeline.length; j++) {
-      if (photos[timeline[j]].timestamp && !photos[timeline[j]]._interpolated) { nextIdx = j; break; }
-    }
+    const prevIdx = previousAnchors[i];
+    const nextIdx = nextAnchors[i];
 
     if (prevIdx >= 0 && nextIdx >= 0) {
       const t0 = photos[timeline[prevIdx]].timestamp.getTime();
@@ -1224,11 +1252,9 @@ function interpolateAll() {
       p._interpolated = new Date(t0 + frac * (t1 - t0));
     } else if (prevIdx >= 0) {
       const anchor = photos[timeline[prevIdx]];
-      const gap = estimateGap();
       p._interpolated = new Date(anchor.timestamp.getTime() + (i - prevIdx) * gap);
     } else if (nextIdx >= 0) {
       const anchor = photos[timeline[nextIdx]];
-      const gap = estimateGap();
       p._interpolated = new Date(anchor.timestamp.getTime() - (nextIdx - i) * gap);
     } else {
       p._interpolated = null;
@@ -1237,17 +1263,22 @@ function interpolateAll() {
 }
 
 function estimateGap() {
-  const anchors = timeline.filter(id => photos[id].timestamp && !photos[id]._interpolated);
-  if (anchors.length < 2) return 30000;
+  let previousAnchorIndex = -1;
+  let previousAnchorTime = null;
+  let anchorCount = 0;
   let total = 0;
-  for (let i = 1; i < anchors.length; i++) {
-    const idxA = timeline.indexOf(anchors[i-1]);
-    const idxB = timeline.indexOf(anchors[i]);
-    const dtA = photos[anchors[i-1]].timestamp.getTime();
-    const dtB = photos[anchors[i]].timestamp.getTime();
-    total += (dtB - dtA) / (idxB - idxA);
+  for (let i = 0; i < timeline.length; i++) {
+    const photo = photos[timeline[i]];
+    if (!photo.timestamp || photo._interpolated) continue;
+    const currentTime = photo.timestamp.getTime();
+    if (previousAnchorIndex >= 0) {
+      total += (currentTime - previousAnchorTime) / (i - previousAnchorIndex);
+    }
+    previousAnchorIndex = i;
+    previousAnchorTime = currentTime;
+    anchorCount++;
   }
-  return total / (anchors.length - 1);
+  return anchorCount < 2 ? 30000 : total / (anchorCount - 1);
 }
 
 function getDisplayTime(p) {
@@ -1296,7 +1327,7 @@ function handleCardClick(e, id, source) {
     selectedIds.add(id);
     selectionAnchor = { source, id };
   }
-  render();
+  updateSelectionUI();
 }
 
 function selectedIdsInSource(source) {
@@ -1316,7 +1347,7 @@ function openCardContextMenu(e, id, source) {
     selectedIds.clear();
     selectedIds.add(id);
     selectionAnchor = { source, id };
-    render();
+    updateSelectionUI();
   }
 
   const menu = document.getElementById('cardContextMenu');
@@ -1342,7 +1373,7 @@ function removeSelectedFromTimeline() {
   selectedIds.clear();
   selectionAnchor = null;
   interpolateAll();
-  render();
+  render({ animate: false });
 }
 
 function selectAllInActiveList() {
@@ -1351,14 +1382,14 @@ function selectAllInActiveList() {
   if (!ids.length) return;
   selectedIds = new Set(ids);
   selectionAnchor = { source, id: ids[0] };
-  render();
+  updateSelectionUI();
 }
 
 function clearSelection() {
   if (!selectedIds.size) return;
   selectedIds.clear();
   selectionAnchor = null;
-  render();
+  updateSelectionUI();
 }
 
 function moveSelectedTimeline(delta) {
@@ -1388,7 +1419,7 @@ function moveSelectedTimeline(delta) {
   pushHistory();
   timeline = moved;
   interpolateAll();
-  render();
+  render({ animate: false });
   return true;
 }
 
@@ -1426,7 +1457,8 @@ function onDropTargetDrop(e, insertIdx) {
   if (!ids.length) return;
   pushHistory();
   if (source === 'pool') {
-    unplaced = unplaced.filter(x => !ids.includes(x));
+    const selected = new Set(ids);
+    unplaced = unplaced.filter(x => !selected.has(x));
     ids.forEach(id => { photos[id].inTimeline = true; });
     timeline.splice(insertIdx, 0, ...ids);
   } else if (source === 'timeline') {
@@ -1439,7 +1471,7 @@ function onDropTargetDrop(e, insertIdx) {
     timeline.splice(newIdx, 0, ...ids);
   }
   interpolateAll();
-  render();
+  render({ animate: false });
 }
 
 function removeFromTimeline(id) {
@@ -1451,7 +1483,7 @@ function removeFromTimeline(id) {
   unplaced.push(id);
   sortUnplacedByName();
   interpolateAll();
-  render();
+  render({ animate: false });
 }
 
 function openTimestampModal(id) {
@@ -1698,8 +1730,8 @@ function animateTimelineCards(oldRects) {
   });
 }
 
-function render() {
-  const oldTimelineRects = getTimelineCardRects();
+function render(options = {}) {
+  const oldTimelineRects = options.animate === false ? null : getTimelineCardRects();
   updateMemoryStatus();
   updateHistoryButtons();
   // Stats
@@ -1722,7 +1754,7 @@ function render() {
     grid.innerHTML = unplaced.map(id => {
       const p = photos[id];
       const selected = selectedIds.has(String(id)) ? ' selected' : '';
-      return `<div class="pool-card${selected}" draggable="true"
+      return `<div class="pool-card${selected}" data-photo-id="${id}" draggable="true"
         onclick="handleCardClick(event,${id},'pool')"
         ondragstart="onCardDragStart(event,${id},'pool')"
         ondragend="onCardDragEnd(event)"

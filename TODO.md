@@ -10,8 +10,8 @@
 
 ### 2. Reduce unnecessary work during rendering
 
-- [ ] Avoid rebuilding the entire timeline and unplaced-photo pool after every small change.
-- [ ] Update only cards and counters affected by a change where practical.
+- [x] Avoid rebuilding the entire timeline and unplaced-photo pool for selection changes.
+- [x] Update only selection classes when selection changes.
 - [ ] Avoid recalculating sorting and membership checks repeatedly during one render.
 - [ ] Limit or disable card transition animations for large collections.
 
@@ -43,9 +43,9 @@
 
 ### 7. Optimize data processing
 
-- [ ] Replace repeated timeline scans in interpolation with linear forward/backward passes.
-- [ ] Use sets or maps for photo membership and lookup operations.
-- [ ] Keep undo snapshots lightweight and avoid copying runtime-only file references.
+- [x] Replace repeated timeline scans in interpolation with linear forward/backward passes.
+- [x] Use sets or maps for photo membership and lookup operations.
+- [x] Keep undo snapshots lightweight and avoid copying runtime-only file references.
 - [ ] Batch progress updates and expensive UI work during large imports.
 
 ### 8. Re-measure and set practical limits
