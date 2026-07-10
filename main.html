@@ -1154,6 +1154,7 @@ function removeSelectedFromTimeline() {
   const ids = selectedIdsInSource('timeline');
   if (!ids.length) return;
 
+  pushHistory();
   const selected = new Set(ids);
   timeline = timeline.filter(id => !selected.has(id));
   for (const id of ids) {
@@ -1166,6 +1167,44 @@ function removeSelectedFromTimeline() {
   selectionAnchor = null;
   interpolateAll();
   render();
+}
+
+function selectAllInActiveList() {
+  const source = selectionAnchor?.source || (timeline.length ? 'timeline' : 'pool');
+  const ids = sourceIds(source).map(String);
+  if (!ids.length) return;
+  selectedIds = new Set(ids);
+  selectionAnchor = { source, id: ids[0] };
+  render();
+}
+
+function clearSelection() {
+  if (!selectedIds.size) return;
+  selectedIds.clear();
+  selectionAnchor = null;
+  render();
+}
+
+function moveSelectedTimeline(delta) {
+  const ids = selectedIdsInSource('timeline');
+  if (!ids.length) return false;
+  const selected = new Set(ids);
+  const indexes = timeline
+    .map((id, index) => selected.has(id) ? index : -1)
+    .filter(index => index >= 0);
+  const minIndex = Math.min(...indexes);
+  const maxIndex = Math.max(...indexes);
+  if ((delta < 0 && minIndex === 0) || (delta > 0 && maxIndex === timeline.length - 1)) return false;
+
+  pushHistory();
+  timeline = timeline.filter(id => !selected.has(id));
+  const newIndex = delta < 0
+    ? minIndex - 1
+    : Math.min(timeline.length, maxIndex + 1);
+  timeline.splice(Math.max(0, newIndex), 0, ...ids);
+  interpolateAll();
+  render();
+  return true;
 }
 
 function onCardDragStart(e, id, source) {
@@ -1450,7 +1489,29 @@ function mkDropTarget(idx, extraClass = '') {
 document.addEventListener('click', hideCardContextMenu);
 document.addEventListener('scroll', hideCardContextMenu, true);
 document.addEventListener('keydown', e => {
-  if (e.key === 'Escape') hideCardContextMenu();
+  if (e.key === 'Escape') {
+    hideCardContextMenu();
+    clearSelection();
+  }
+  if (e.key === 'Delete' || e.key === 'Backspace') {
+    if (e.target.closest('input, textarea, [contenteditable="true"]')) return;
+    if (selectedIdsInSource('timeline').length) {
+      e.preventDefault();
+      removeSelectedFromTimeline();
+    }
+  }
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') {
+    if (e.target.closest('input, textarea, [contenteditable="true"]')) return;
+    e.preventDefault();
+    selectAllInActiveList();
+  }
+  if (!e.ctrlKey && !e.metaKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+    if (e.target.closest('input, textarea, [contenteditable="true"]')) return;
+    if (selectedIdsInSource('timeline').length) {
+      e.preventDefault();
+      moveSelectedTimeline(e.key === 'ArrowLeft' ? -1 : 1);
+    }
+  }
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
     if (e.target.closest('input, textarea, [contenteditable="true"]')) return;
     e.preventDefault();
