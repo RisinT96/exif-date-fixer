@@ -189,6 +189,8 @@
     flex: 1;
     overflow-y: auto;
     padding: 10px;
+    scroll-behavior: smooth;
+    overscroll-behavior: contain;
   }
 
   .unplaced-pool h3 {
@@ -232,6 +234,8 @@
     flex: 1;
     overflow-y: auto;
     padding: 16px;
+    scroll-behavior: smooth;
+    overscroll-behavior: contain;
   }
 
   .timeline-list {
@@ -1377,7 +1381,7 @@ function removeSelectedFromTimeline() {
   selectedIds.clear();
   selectionAnchor = null;
   interpolateAll();
-  render({ animate: false });
+  render();
 }
 
 function selectAllInActiveList() {
@@ -1423,7 +1427,7 @@ function moveSelectedTimeline(delta) {
   pushHistory();
   timeline = moved;
   interpolateAll();
-  render({ animate: false });
+  render();
   return true;
 }
 
@@ -1475,7 +1479,7 @@ function onDropTargetDrop(e, insertIdx) {
     timeline.splice(newIdx, 0, ...ids);
   }
   interpolateAll();
-  render({ animate: false });
+  render();
 }
 
 function removeFromTimeline(id) {
@@ -1487,7 +1491,7 @@ function removeFromTimeline(id) {
   unplaced.push(id);
   sortUnplacedByName();
   interpolateAll();
-  render({ animate: false });
+  render();
 }
 
 function openTimestampModal(id) {
