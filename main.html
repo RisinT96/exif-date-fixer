@@ -2660,14 +2660,14 @@ function downloadCSV() {
     alert(`Invalid IANA timezone: ${timeZone}`);
     return;
   }
-  const rows = ['filename,timestamp,timestamp_utc,timezone'];
+  const rows = ['filename,timestamp,timestamp_utc,timezone,interpolated'];
   const all = [...timeline, ...unplaced];
   for (const id of all) {
     const p = photos[id];
     const dt = getDisplayTime(p);
     if (dt) {
       const timestamps = attachTimezone(dt.time, timeZone);
-      rows.push(`${csvCell(p.name)},${csvCell(timestamps.localText)},${csvCell(timestamps.utcText)},${csvCell(timeZone)}`);
+      rows.push(`${csvCell(p.name)},${csvCell(timestamps.localText)},${csvCell(timestamps.utcText)},${csvCell(timeZone)},${csvCell(dt.kind === 'interp')}`);
     }
   }
   const blob = new Blob([rows.join('\n')], { type: 'text/csv' });
