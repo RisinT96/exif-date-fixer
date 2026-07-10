@@ -373,6 +373,7 @@
   .badge-interp { background: #1a1c3a; color: #5b6af0; }
   .badge-cam1 { background: #2a1e10; color: #c87a30; }
   .badge-cam2 { background: #1a2030; color: #4a90d0; }
+  .badge-source { background: #25253a; color: #a5a8f0; }
 
   .card-actions {
     display: flex;
@@ -577,7 +578,7 @@
   <div class="modal">
     <h2 id="modalTitle">Set Timestamp</h2>
     <p id="modalDesc">Enter the capture time for this photo. It will act as an anchor for interpolation.</p>
-    <input type="datetime-local" id="modalInput" step="1">
+    <input type="datetime-local" id="modalInput" min="1970-01-01T00:00:00" max="2100-12-31T23:59:59" step="1">
     <div class="modal-actions">
       <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
       <button class="btn btn-primary" id="confirmTimestampBtn" onclick="confirmTimestamp()">Set Anchor</button>
@@ -803,6 +804,7 @@ function buildSessionState() {
       name: p.name,
       camera: p.camera,
       timestamp: dateToLocalStamp(p.timestamp),
+      timestampSource: p.timestampSource || null,
       thumbURL: p.thumbURL,
       inTimeline: p.inTimeline
     };
@@ -830,6 +832,7 @@ function restoreSessionState(state) {
       name: p.name || `photo-${id}`,
       camera: p.camera || detectCamera(p.name || ''),
       timestamp: localStampToDate(p.timestamp),
+      timestampSource: p.timestampSource || (p.timestamp ? 'exif' : null),
       thumbURL: p.thumbURL || null,
       inTimeline: !!p.inTimeline,
       _interpolated: null
@@ -907,18 +910,18 @@ async function readExifDate(file) {
     // File or the returned tags after extracting the timestamp.
     const tags = await ExifReader.load(file);
     const candidates = [
-      tags.DateTimeOriginal?.description,
-      tags.CreateDate?.description,
-      tags.ModifyDate?.description,
-      tags.DateTimeDigitized?.description,
-      tags.DateTime?.description,
-      tags['XMP-xmp:CreateDate']?.description,
-      tags['XMP-photoshop:DateCreated']?.description,
+      { value: tags.DateTimeOriginal?.description, source: 'exif' },
+      { value: tags.CreateDate?.description, source: 'exif' },
+      { value: tags.ModifyDate?.description, source: 'exif' },
+      { value: tags.DateTimeDigitized?.description, source: 'exif' },
+      { value: tags.DateTime?.description, source: 'exif' },
+      { value: tags['XMP-xmp:CreateDate']?.description, source: 'xmp' },
+      { value: tags['XMP-photoshop:DateCreated']?.description, source: 'xmp' },
     ];
 
-    for (const value of candidates) {
-      const parsed = parseMetadataDate(value);
-      if (parsed) return parsed;
+    for (const candidate of candidates) {
+      const parsed = parseMetadataDate(candidate.value);
+      if (parsed) return { date: parsed, source: candidate.source };
     }
     return null;
   } catch (err) {
@@ -988,15 +991,18 @@ async function handleFiles(files) {
     }
     const id = String(nextId++);
     let timestamp = null;
+    let timestampSource = null;
     try {
-      timestamp = await readExifDate(file);
+      const metadata = await readExifDate(file);
+      timestamp = metadata?.date || null;
+      timestampSource = metadata?.source || null;
     } catch (err) {
       const path = file.webkitRelativePath || file.name;
       processingState.errors.push(`Metadata error: ${path} — ${err.message}`);
     }
     const thumbURL = await makeThumbnail(file);
     const camera = detectCamera(file.name);
-    photos[id] = { id, name: file.name, camera, timestamp, thumbURL, inTimeline: false, _interpolated: null };
+    photos[id] = { id, name: file.name, camera, timestamp, timestampSource, thumbURL, inTimeline: false, _interpolated: null };
     estimatedAppBytes += estimatePhotoBytes(photos[id]);
     if (timestamp) {
       timeline.push(id);
@@ -1317,6 +1323,7 @@ function confirmTimestamp() {
   const timestamp = new Date(val);
   for (const id of modalTargets) {
     photos[id].timestamp = new Date(timestamp.getTime());
+    photos[id].timestampSource = 'manual';
     photos[id]._interpolated = null;
   }
   interpolateAll();
@@ -1491,10 +1498,8 @@ function render() {
     const badge = isAnchor
       ? `<span class="photo-badge badge-anchor">ANCHOR</span>`
       : isInterp ? `<span class="photo-badge badge-interp">~</span>` : '';
-    const camBadge = p.camera === CAM1
-      ? `<span class="photo-badge badge-cam1">DSC</span>`
-      : p.camera === CAM2
-      ? `<span class="photo-badge badge-cam2">976A</span>` : '';
+    const sourceBadge = isAnchor && p.timestampSource
+      ? `<span class="photo-badge badge-source" title="Timestamp source">${p.timestampSource.toUpperCase()}</span>` : '';
     html += `<div class="timeline-entry">${mkDropTarget(i)}<div class="photo-card ${cardClass}${selectedClass}" data-photo-id="${id}" draggable="true"
       onclick="handleCardClick(event,${id},'timeline')"
       oncontextmenu="openCardContextMenu(event,${id},'timeline')"
@@ -1505,7 +1510,7 @@ function render() {
         <div class="photo-name">${p.name}</div>
         <div class="photo-time ${timeClass}">${timeStr}</div>
         <div class="card-actions">
-          ${camBadge}
+          ${sourceBadge}
           ${badge}
           <div style="flex:1"></div>
           <button class="remove-btn" onclick="removeFromTimeline(${id})" title="Remove">×</button>
