@@ -488,6 +488,20 @@
     flex-shrink: 0;
   }
   .remove-btn:hover { color: #e05a5a; background: #2a1515; }
+  .pool-delete-btn {
+    position: absolute;
+    right: 4px;
+    bottom: 4px;
+    border: 0;
+    border-radius: 3px;
+    padding: 2px 4px;
+    background: rgba(19,19,26,0.78);
+    color: #8a8690;
+    cursor: pointer;
+    opacity: 0;
+  }
+  .pool-card:hover .pool-delete-btn, .pool-delete-btn:focus-visible { opacity: 1; }
+  .pool-delete-btn:hover { color: #e05a5a; background: #2a1515; }
 
   .pool-card {
     padding: 6px 8px;
@@ -766,6 +780,7 @@
 
 <div class="context-menu" id="cardContextMenu" style="display:none">
   <button type="button" onclick="removeSelectedFromTimeline()">Remove</button>
+  <button type="button" onclick="deleteSelectedPhotos()">Delete permanently</button>
 </div>
 
 <div class="modal-overlay" id="summaryModal" style="display:none">
@@ -1787,6 +1802,10 @@ function onCardContainerClick(event) {
     removeFromTimeline(id);
     return;
   }
+  if (action === 'delete') {
+    deletePhotos([id]);
+    return;
+  }
   if (action === 'edit-timestamp') {
     openTimestampModal(id);
     return;
@@ -1860,6 +1879,27 @@ function removeSelectedFromTimeline() {
   finalizeIncrementalTransfer(getTransferAffectedIds(previousTimeline, timeline, new Set(ids)));
 }
 
+function deleteSelectedPhotos() {
+  hideCardContextMenu();
+  const ids = selectedIdsInSource('timeline');
+  deletePhotos(ids);
+}
+
+function deletePhotos(ids) {
+  ids = [...new Set(ids.map(String))].filter(id => photos[id]);
+  if (!ids.length) return;
+  pushHistory();
+  const deleted = new Set(ids);
+  timeline = timeline.filter(id => !deleted.has(String(id)));
+  unplaced = unplaced.filter(id => !deleted.has(String(id)));
+  ids.forEach(id => delete photos[id]);
+  selectedIds.clear();
+  selectionAnchor = null;
+  interpolateAll();
+  recalculateEstimatedAppBytes();
+  render({ animate: false });
+}
+
 function selectAllInActiveList() {
   const source = selectionAnchor?.source || (timeline.length ? 'timeline' : 'pool');
   const ids = sourceIds(source).map(String);
@@ -1926,7 +1966,7 @@ function poolCardMarkup(id) {
   const selected = selectedIds.has(String(id)) ? ' selected' : '';
   return `<div class="pool-card${selected}" data-photo-id="${id}"
     title="${photo.name.replace(/"/g,'&quot;')}">
-    <div class="pool-thumb">${photo.thumbURL ? `<img src="${photo.thumbURL}" loading="lazy" decoding="async" alt="">` : '🖼'}<button type="button" class="view-btn" data-action="view" title="Open fullscreen" aria-label="Open ${escapeHtml(photo.name)} fullscreen">⛶</button></div>
+    <div class="pool-thumb">${photo.thumbURL ? `<img src="${photo.thumbURL}" loading="lazy" decoding="async" alt="">` : '🖼'}<button type="button" class="view-btn" data-action="view" title="Open fullscreen" aria-label="Open ${escapeHtml(photo.name)} fullscreen">⛶</button><button type="button" class="pool-delete-btn" data-action="delete" title="Delete permanently" aria-label="Delete ${escapeHtml(photo.name)} permanently">🗑</button></div>
     <div class="pool-name">${photo.name}</div>
   </div>`;
 }
@@ -2776,7 +2816,7 @@ function render(options = {}) {
         const selected = selectedIds.has(String(id)) ? ' selected' : '';
         return `<div class="pool-card${selected}" data-photo-id="${id}"
           title="${p.name.replace(/"/g,'&quot;')}">
-          <div class="pool-thumb">${p.thumbURL ? `<img src="${p.thumbURL}" loading="lazy" decoding="async" alt="">` : '🖼'}<button type="button" class="view-btn" data-action="view" title="Open fullscreen" aria-label="Open ${escapeHtml(p.name)} fullscreen">⛶</button></div>
+          <div class="pool-thumb">${p.thumbURL ? `<img src="${p.thumbURL}" loading="lazy" decoding="async" alt="">` : '🖼'}<button type="button" class="view-btn" data-action="view" title="Open fullscreen" aria-label="Open ${escapeHtml(p.name)} fullscreen">⛶</button><button type="button" class="pool-delete-btn" data-action="delete" title="Delete permanently" aria-label="Delete ${escapeHtml(p.name)} permanently">🗑</button></div>
           <div class="pool-name">${p.name}</div>
         </div>`;
       }).join('');
