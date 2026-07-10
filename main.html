@@ -316,6 +316,8 @@
     width: 160px;
     flex: 0 0 160px;
     will-change: transform;
+    content-visibility: auto;
+    contain-intrinsic-size: 160px 214px;
   }
   .photo-card:hover { border-color: #3a3a50; background: #22222e; }
   .photo-card.dragging { opacity: 0.4; cursor: grabbing; }
@@ -410,6 +412,8 @@
     flex-direction: column;
     gap: 4px;
     transition: all 0.12s;
+    content-visibility: auto;
+    contain-intrinsic-size: 120px 82px;
   }
   .pool-card:hover { border-color: #5b6af0; background: #22222e; }
   .pool-card.dragging { opacity: 0.3; }
@@ -1759,7 +1763,7 @@ function render(options = {}) {
         ondragstart="onCardDragStart(event,${id},'pool')"
         ondragend="onCardDragEnd(event)"
         title="${p.name.replace(/"/g,'&quot;')}">
-        <div class="pool-thumb" onclick="openPhotoViewer(event,${id})">${p.thumbURL ? `<img src="${p.thumbURL}">` : '🖼'}</div>
+        <div class="pool-thumb" onclick="openPhotoViewer(event,${id})">${p.thumbURL ? `<img src="${p.thumbURL}" loading="lazy" decoding="async" alt="">` : '🖼'}</div>
         <div class="pool-name">${p.name}</div>
       </div>`;
     }).join('');
@@ -1807,7 +1811,7 @@ function render(options = {}) {
       oncontextmenu="openCardContextMenu(event,${id},'timeline')"
       ondragstart="onCardDragStart(event,${id},'timeline')"
       ondragend="onCardDragEnd(event)">
-      <div class="photo-thumb" onclick="openPhotoViewer(event,${id})">${p.thumbURL ? `<img src="${p.thumbURL}">` : '🖼'}</div>
+      <div class="photo-thumb" onclick="openPhotoViewer(event,${id})">${p.thumbURL ? `<img src="${p.thumbURL}" loading="lazy" decoding="async" alt="">` : '🖼'}</div>
       <div class="photo-footer">
         <div class="photo-name">${p.name}</div>
         <div class="photo-time ${timeClass}">${timeStr}</div>

@@ -19,12 +19,12 @@
 
 - [ ] Store thumbnails as compressed blobs instead of base64 data URLs.
 - [ ] Create object URLs only for thumbnails currently needed by the UI.
-- [ ] Lazy-load thumbnail images as their cards approach the viewport.
+- [x] Lazy-load thumbnail images as their cards approach the viewport.
 - [ ] Release object URLs and decoded image resources when cards leave the active window.
 
 ### 4. Add low-risk browser rendering optimizations
 
-- [ ] Add CSS containment and `content-visibility` to photo-card containers.
+- [x] Add CSS containment and `content-visibility` to photo-card containers.
 - [ ] Replace per-card inline event handlers with delegated events from the timeline and pool containers.
 - [ ] Use document fragments or equivalent batched DOM updates for visible-card changes.
 
