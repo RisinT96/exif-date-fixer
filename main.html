@@ -1613,32 +1613,89 @@ function updatePoolEmptyState() {
   }
 }
 
+function poolCardsById() {
+  return new Map([...document.querySelectorAll('#poolGrid .pool-card[data-photo-id]')]
+    .map(card => [card.dataset.photoId, card]));
+}
+
+function reconcilePoolCards() {
+  const grid = document.getElementById('poolGrid');
+  if (!unplaced.length) {
+    grid.innerHTML = '<div class="pool-empty" style="color:#4a4a58;font-size:12px;padding:6px;grid-column:1/-1">All photos placed ✓</div>';
+    return;
+  }
+  const existingCards = poolCardsById();
+  const fragment = document.createDocumentFragment();
+  unplaced.forEach(id => {
+    fragment.appendChild(existingCards.get(String(id)) || elementFromMarkup(poolCardMarkup(id)));
+  });
+  grid.replaceChildren(fragment);
+}
+
 function removePoolCards(ids) {
-  ids.forEach(id => document.querySelector(`#poolGrid .pool-card[data-photo-id="${id}"]`)?.remove());
+  if (ids.length > 24) {
+    reconcilePoolCards();
+    return;
+  }
+  const cards = poolCardsById();
+  ids.forEach(id => cards.get(String(id))?.remove());
   updatePoolEmptyState();
 }
 
 function insertPoolCards(ids) {
+  if (ids.length > 24) {
+    reconcilePoolCards();
+    return;
+  }
   const inserted = new Set(ids.map(String));
   const grid = document.getElementById('poolGrid');
   updatePoolEmptyState();
-  unplaced.forEach((id, index) => {
-    if (!inserted.has(String(id))) return;
-    const nextExistingId = unplaced.slice(index + 1)
-      .find(nextId => grid.querySelector(`.pool-card[data-photo-id="${nextId}"]`));
-    const nextCard = nextExistingId
-      ? grid.querySelector(`.pool-card[data-photo-id="${nextExistingId}"]`) : null;
-    grid.insertBefore(elementFromMarkup(poolCardMarkup(id)), nextCard);
-  });
+  const cards = poolCardsById();
+  let nextCard = null;
+  for (let index = unplaced.length - 1; index >= 0; index--) {
+    const id = unplaced[index];
+    if (inserted.has(String(id))) {
+      const card = elementFromMarkup(poolCardMarkup(id));
+      grid.insertBefore(card, nextCard);
+      cards.set(String(id), card);
+    }
+    nextCard = cards.get(String(id)) || nextCard;
+  }
 }
 
 function removeTimelineEntries(ids) {
-  ids.forEach(id => document.querySelector(`#timelineList .photo-card[data-photo-id="${id}"]`)?.closest('.timeline-entry')?.remove());
+  if (!timeline.length) return;
+  const list = document.getElementById('timelineList');
+  const selected = new Set(ids.map(String));
+  const entries = [...list.querySelectorAll('.timeline-entry')];
+  if (ids.length > 24) {
+    const fragment = document.createDocumentFragment();
+    entries.forEach(entry => {
+      const id = entry.querySelector('.photo-card[data-photo-id]')?.dataset.photoId;
+      if (!selected.has(id)) fragment.appendChild(entry);
+    });
+    list.replaceChildren(fragment);
+    return;
+  }
+  entries.forEach(entry => {
+    const id = entry.querySelector('.photo-card[data-photo-id]')?.dataset.photoId;
+    if (selected.has(id)) entry.remove();
+  });
 }
 
 function insertTimelineEntries(ids) {
   const inserted = new Set(ids.map(String));
   const list = document.getElementById('timelineList');
+  if (ids.length > 24) {
+    const entriesById = new Map([...list.querySelectorAll('.timeline-entry')]
+      .map(entry => [entry.querySelector('.photo-card[data-photo-id]')?.dataset.photoId, entry]));
+    const fragment = document.createDocumentFragment();
+    timeline.forEach(id => {
+      fragment.appendChild(entriesById.get(String(id)) || elementFromMarkup(timelineEntryMarkup(id)));
+    });
+    list.replaceChildren(fragment);
+    return;
+  }
   if (!list.querySelector('.timeline-entry')) list.innerHTML = '';
   timeline.forEach((id, index) => {
     if (!inserted.has(String(id))) return;
