@@ -146,6 +146,8 @@
     background: #5b6af0;
     transition: width 0.15s ease;
   }
+  .progress-bar.complete { background: #4caf82; }
+  .processing-label.complete { color: #4caf82; }
   .processing-errors {
     display: flex;
     flex-direction: column;
@@ -736,11 +738,14 @@ function updateProcessingProgress() {
   if (!status || !bar || !label || !errorList) return;
 
   status.classList.add('active');
+  const complete = !processingState.active;
+  bar.classList.toggle('complete', complete);
+  label.classList.toggle('complete', complete);
   bar.style.width = `${percent}%`;
   progress?.setAttribute('aria-valuenow', String(percent));
   label.textContent = processingState.active
-    ? `Processing ${processed} of ${total}…`
-    : `Processed ${processed} of ${total}`;
+    ? `🔄 Processing ${processed} of ${total}…`
+    : `✅ Processed ${processed} of ${total}`;
   errorList.innerHTML = errors
     .map(error => `<div>${escapeHtml(error)}</div>`)
     .join('');
