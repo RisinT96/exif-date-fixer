@@ -616,7 +616,8 @@
   .modal h2 { font-size: 16px; margin-bottom: 6px; }
   .modal p { font-size: 13px; color: #8a8690; margin-bottom: 16px; line-height: 1.5; }
   .modal input[type="datetime-local"],
-  .modal input[type="number"] {
+  .modal input[type="number"],
+  .modal input[type="text"] {
     width: 100%;
     padding: 8px 10px;
     background: #13131a;
@@ -808,6 +809,19 @@
     <div class="modal-actions" style="margin-top:16px">
       <button class="btn btn-ghost" onclick="closeSettings()">Cancel</button>
       <button class="btn btn-primary" onclick="saveSettings()">Save</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="csvTimezoneModal" style="display:none">
+  <div class="modal">
+    <h2>Export timezone</h2>
+    <p>The timeline clock values will be kept unchanged and this IANA timezone will be attached to them.</p>
+    <label for="csvTimezone" style="display:block;margin-bottom:6px;font-size:12px;color:#c8c4be">Timezone</label>
+    <input type="text" id="csvTimezone" value="Asia/Jerusalem" spellcheck="false" aria-label="CSV export timezone">
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeCsvTimezoneModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="downloadCSV()">Export</button>
     </div>
   </div>
 </div>
@@ -2584,16 +2598,54 @@ function removeManualAnchors() {
 
 // ── EXPORT, IMPORT, AND SUMMARY MODALS ─────────────────────────────────────
 function exportCSV() {
-  const rows = ['filename,timestamp'];
+  document.getElementById('csvTimezoneModal').style.display = 'flex';
+}
+
+function closeCsvTimezoneModal() {
+  document.getElementById('csvTimezoneModal').style.display = 'none';
+}
+
+function timezoneParts(date, timeZone) {
+  return Object.fromEntries(new Intl.DateTimeFormat('en-US', {
+    timeZone, year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23'
+  }).formatToParts(date).filter(part => part.type !== 'literal').map(part => [part.type, Number(part.value)]));
+}
+
+function timezoneOffsetMinutes(instant, timeZone) {
+  const parts = timezoneParts(instant, timeZone);
+  return (Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, parts.second) - instant.getTime()) / 60000;
+}
+
+function attachTimezone(date, timeZone) {
+  const pad = n => String(n).padStart(2, '0');
+  const wall = Date.UTC(date.getFullYear(), date.getMonth(), date.getDate(), date.getHours(), date.getMinutes(), date.getSeconds());
+  const firstOffset = timezoneOffsetMinutes(new Date(wall), timeZone);
+  const offset = timezoneOffsetMinutes(new Date(wall - firstOffset * 60000), timeZone);
+  const sign = offset >= 0 ? '+' : '-';
+  const absoluteOffset = Math.abs(offset);
+  const offsetText = `${sign}${pad(Math.floor(absoluteOffset / 60))}:${pad(absoluteOffset % 60)}`;
+  const utc = new Date(wall - offset * 60000);
+  const localText = `${date.getFullYear()}:${pad(date.getMonth()+1)}:${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}${offsetText}`;
+  return { localText, utcText: utc.toISOString().replace('.000Z', 'Z') };
+}
+
+function downloadCSV() {
+  const timeZone = document.getElementById('csvTimezone').value.trim();
+  try {
+    timezoneParts(new Date(), timeZone);
+  } catch (error) {
+    alert(`Invalid IANA timezone: ${timeZone}`);
+    return;
+  }
+  const rows = ['filename,timestamp,timestamp_utc,timezone'];
   const all = [...timeline, ...unplaced];
   for (const id of all) {
     const p = photos[id];
     const dt = getDisplayTime(p);
     if (dt) {
-      const d = dt.time;
-      const pad = n => String(n).padStart(2, '0');
-      const ts = `${d.getFullYear()}:${pad(d.getMonth()+1)}:${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
-      rows.push(`${csvCell(p.name)},${csvCell(ts)}`);
+      const timestamps = attachTimezone(dt.time, timeZone);
+      rows.push(`${csvCell(p.name)},${csvCell(timestamps.localText)},${csvCell(timestamps.utcText)},${csvCell(timeZone)}`);
     }
   }
   const blob = new Blob([rows.join('\n')], { type: 'text/csv' });
@@ -2601,6 +2653,7 @@ function exportCSV() {
   a.href = URL.createObjectURL(blob);
   a.download = 'photo_timestamps.csv';
   a.click();
+  closeCsvTimezoneModal();
 }
 
 function exportSessionFile() {
