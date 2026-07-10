@@ -577,7 +577,7 @@
     <input type="datetime-local" id="modalInput" step="1">
     <div class="modal-actions">
       <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
-      <button class="btn btn-primary" onclick="confirmTimestamp()">Set Anchor</button>
+      <button class="btn btn-primary" id="confirmTimestampBtn" onclick="confirmTimestamp()">Set Anchor</button>
     </div>
   </div>
 </div>
@@ -607,7 +607,7 @@ let nextId = 0;
 let timeline = [];   // ordered list of numeric id strings
 let unplaced = [];   // numeric id strings not yet in timeline
 let dragState = null;
-let modalTarget = null;
+let modalTargets = [];
 let selectedIds = new Set();
 let selectionAnchor = null;
 
@@ -1271,10 +1271,17 @@ function removeFromTimeline(id) {
 
 function openTimestampModal(id) {
   id = String(id);
-  modalTarget = id;
+  const source = photos[id].inTimeline ? 'timeline' : 'pool';
+  modalTargets = selectedIds.has(id) ? selectedIdsInSource(source) : [id];
   const p = photos[id];
-  document.getElementById('modalTitle').textContent = `Set timestamp — ${p.name}`;
-  document.getElementById('modalDesc').textContent = `Enter the exact capture time. This photo will become an anchor for interpolation.`;
+  const multiple = modalTargets.length > 1;
+  document.getElementById('modalTitle').textContent = multiple
+    ? `Set timestamp — ${modalTargets.length} photos`
+    : `Set timestamp — ${p.name}`;
+  document.getElementById('modalDesc').textContent = multiple
+    ? `The entered time will be applied to all selected photos.`
+    : `Enter the exact capture time. This photo will become an anchor for interpolation.`;
+  document.getElementById('confirmTimestampBtn').textContent = multiple ? 'Set Timestamps' : 'Set Anchor';
   const existing = p.timestamp;
   if (existing) {
     const local = new Date(existing.getTime() - existing.getTimezoneOffset() * 60000);
@@ -1287,15 +1294,19 @@ function openTimestampModal(id) {
 
 function closeModal() {
   document.getElementById('tsModal').style.display = 'none';
-  modalTarget = null;
+  modalTargets = [];
+  document.getElementById('confirmTimestampBtn').textContent = 'Set Anchor';
 }
 
 function confirmTimestamp() {
   const val = document.getElementById('modalInput').value;
-  if (!val || !modalTarget) { closeModal(); return; }
+  if (!val || !modalTargets.length) { closeModal(); return; }
   pushHistory();
-  photos[modalTarget].timestamp = new Date(val);
-  photos[modalTarget]._interpolated = null;
+  const timestamp = new Date(val);
+  for (const id of modalTargets) {
+    photos[id].timestamp = new Date(timestamp.getTime());
+    photos[id]._interpolated = null;
+  }
   interpolateAll();
   render();
   closeModal();
