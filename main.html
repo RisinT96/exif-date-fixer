@@ -336,6 +336,8 @@
   }
   .photo-thumb img { width: 100%; height: 100%; object-fit: cover; }
 
+  .photo-thumb { cursor: zoom-in; }
+
   .photo-footer {
     display: flex;
     flex-direction: column;
@@ -520,6 +522,44 @@
   }
   .summary-grid strong { color: #c8c4be; font-variant-numeric: tabular-nums; }
   .summary-errors { margin-top: 14px; color: #e05a5a; font-size: 11px; line-height: 1.5; }
+
+  .viewer-overlay {
+    position: fixed; inset: 0;
+    display: flex; align-items: center; justify-content: center;
+    padding: 28px;
+    background: rgba(0,0,0,0.92);
+    z-index: 200;
+  }
+  .viewer-image {
+    display: block;
+    max-width: 100%; max-height: 100%;
+    object-fit: contain;
+    user-select: none;
+  }
+  .viewer-title {
+    position: fixed;
+    left: 20px; bottom: 16px;
+    max-width: calc(100% - 100px);
+    color: #c8c4be;
+    font-size: 12px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .viewer-close {
+    position: fixed;
+    top: 14px; right: 18px;
+    width: 34px; height: 34px;
+    border: 1px solid #555563;
+    border-radius: 50%;
+    background: rgba(30,30,40,0.8);
+    color: #e0ddd8;
+    font-size: 24px;
+    line-height: 28px;
+    cursor: pointer;
+  }
+  .viewer-close:hover { background: #3a3a48; }
+  .viewer-fallback { color: #8a8690; font-size: 14px; text-align: center; }
 </style>
 </head>
 <body>
@@ -626,6 +666,15 @@
   </div>
 </div>
 
+<div class="viewer-overlay" id="photoViewer" style="display:none"
+     role="dialog" aria-modal="true" aria-label="Photo viewer"
+     onclick="handleViewerBackgroundClick(event)">
+  <button class="viewer-close" type="button" onclick="closePhotoViewer()" aria-label="Close photo viewer">×</button>
+  <img class="viewer-image" id="viewerImage" alt="">
+  <div class="viewer-fallback" id="viewerFallback" style="display:none"></div>
+  <div class="viewer-title" id="viewerTitle"></div>
+</div>
+
 <script src="https://cdn.jsdelivr.net/npm/exifreader@4.16.0/dist/exif-reader.min.js"></script>
 <script>
 // photos keyed by numeric id (string of integer)
@@ -638,6 +687,7 @@ let modalTargets = [];
 let selectedIds = new Set();
 let selectionAnchor = null;
 let unplacedSortMode = 'name';
+let viewerObjectURL = null;
 
 const CAM1 = 'DSC';
 const CAM2 = '976A';
@@ -727,7 +777,9 @@ function updateMemoryStatus() {
 
 function estimatePhotoBytes(photo) {
   // JavaScript strings are approximately two bytes per character.
-  return (photo.name?.length || 0) * 2 + (photo.thumbURL?.length || 0) * 2 + 512;
+  return (photo.name?.length || 0) * 2
+    + (photo.thumbURL?.length || 0) * 2
+    + (photo.sourceFingerprint?.length || 0) * 2 + 512;
 }
 
 function recalculateEstimatedAppBytes() {
@@ -736,7 +788,12 @@ function recalculateEstimatedAppBytes() {
 }
 
 function captureEditorState() {
-  return structuredClone({ photos, nextId, timeline, unplaced });
+  const photoState = {};
+  for (const [id, photo] of Object.entries(photos)) {
+    const { sourceFile, ...persistablePhoto } = photo;
+    photoState[id] = persistablePhoto;
+  }
+  return structuredClone({ photos: photoState, nextId, timeline, unplaced });
 }
 
 function pushHistory() {
@@ -747,7 +804,12 @@ function pushHistory() {
 }
 
 function restoreEditorState(state) {
+  const runtimeSources = photos;
   photos = state.photos;
+  for (const [id, photo] of Object.entries(photos)) {
+    const sourceFile = runtimeSources[id]?.sourceFile;
+    if (sourceFile) photo.sourceFile = sourceFile;
+  }
   nextId = state.nextId;
   timeline = state.timeline;
   unplaced = state.unplaced;
@@ -842,6 +904,8 @@ function buildSessionState() {
       timestamp: dateToLocalStamp(p.timestamp),
       timestampSource: p.timestampSource || null,
       modifiedTime: p.modifiedTime || 0,
+      sourceSize: Number.isFinite(p.sourceSize) ? p.sourceSize : null,
+      sourceFingerprint: p.sourceFingerprint || null,
       thumbURL: p.thumbURL,
       inTimeline: p.inTimeline
     };
@@ -874,6 +938,8 @@ function restoreSessionState(state) {
       timestamp: localStampToDate(p.timestamp),
       timestampSource: p.timestampSource || (p.timestamp ? 'exif' : null),
       modifiedTime: Number(p.modifiedTime) || 0,
+      sourceSize: Number.isFinite(p.sourceSize) ? p.sourceSize : null,
+      sourceFingerprint: p.sourceFingerprint || null,
       thumbURL: p.thumbURL || null,
       inTimeline: !!p.inTimeline,
       _interpolated: null
@@ -1006,8 +1072,48 @@ function makeThumbnail(file) {
   });
 }
 
+async function fingerprintFile(file) {
+  // Hash bounded samples instead of reading a potentially multi-gigabyte
+  // source into memory. Include metadata so equal samples from different
+  // files are less likely to compare equal.
+  const sampleSize = 1024 * 1024;
+  const first = await file.slice(0, sampleSize).arrayBuffer();
+  const lastStart = Math.max(0, file.size - sampleSize);
+  const last = lastStart ? await file.slice(lastStart).arrayBuffer() : first;
+  const metadata = new TextEncoder().encode(`${file.name}\0${file.size}\0${file.lastModified}\0${file.type}`);
+  const combined = new Uint8Array(metadata.byteLength + first.byteLength + (lastStart ? last.byteLength : 0));
+  combined.set(metadata, 0);
+  combined.set(new Uint8Array(first), metadata.byteLength);
+  if (lastStart) combined.set(new Uint8Array(last), metadata.byteLength + first.byteLength);
+  const digest = await crypto.subtle.digest('SHA-256', combined);
+  return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
+}
+
+async function getSourceIdentity(file) {
+  let sourceFingerprint = null;
+  try {
+    if (globalThis.crypto?.subtle) sourceFingerprint = await fingerprintFile(file);
+  } catch (err) {
+    console.warn('Could not fingerprint source file', file.name, err);
+  }
+  return { sourceSize: file.size, sourceFingerprint };
+}
+
+function sourceMatchesPhoto(photo, file, identity) {
+  if (photo.sourceFingerprint && identity.sourceFingerprint) {
+    return photo.sourceFingerprint === identity.sourceFingerprint;
+  }
+  // Legacy sessions predate sourceSize/sourceFingerprint. Their existing
+  // modifiedTime is the strongest identity available without the old file.
+  if (photo.sourceSize != null) {
+    return photo.sourceSize === file.size
+      && Number(photo.modifiedTime) === Number(file.lastModified);
+  }
+  return Number(photo.modifiedTime) === Number(file.lastModified);
+}
+
 async function handleFiles(files) {
-  const existingNames = new Set(Object.values(photos).map(p => p.name));
+  const existingPhotosByName = new Map(Object.values(photos).map(photo => [photo.name, photo]));
 
   let total = 0;
   for (let i = 0; i < files.length; i++) {
@@ -1025,9 +1131,19 @@ async function handleFiles(files) {
   for (let i = 0; i < files.length; i++) {
     const file = files[i];
     if (!(file.type.startsWith('image/') || file.name.match(/\.(jpg|jpeg|png|webp|avif|heic|heif|tiff|tif|raw|crw|cr2|dng|dcr|nef|arw|raf|orf|rw2)$/i))) continue;
-    if (existingNames.has(file.name)) {
+    const existingPhoto = existingPhotosByName.get(file.name);
+    const sourceIdentity = await getSourceIdentity(file);
+    if (existingPhoto) {
       const path = file.webkitRelativePath || file.name;
-      processingState.errors.push(`Duplicate filename skipped: ${path}`);
+      if (sourceMatchesPhoto(existingPhoto, file, sourceIdentity)) {
+        existingPhoto.sourceFile = file;
+        existingPhoto.sourceSize = sourceIdentity.sourceSize;
+        existingPhoto.sourceFingerprint ||= sourceIdentity.sourceFingerprint;
+        processingState.processed++;
+        updateProcessingProgress();
+        continue;
+      }
+      processingState.errors.push(`File mismatch for existing photo: ${path}`);
       processingState.processed++;
       updateProcessingProgress();
       continue;
@@ -1045,7 +1161,9 @@ async function handleFiles(files) {
     }
     const thumbURL = await makeThumbnail(file);
     const camera = detectCamera(file.name);
-    photos[id] = { id, name: file.name, camera, timestamp, timestampSource, modifiedTime: file.lastModified || 0, thumbURL, inTimeline: false, _interpolated: null };
+    // Keep only a lazy reference to the source. The file bytes are not read
+    // into app state; they are loaded only if the user opens this photo.
+    photos[id] = { id, name: file.name, camera, timestamp, timestampSource, modifiedTime: file.lastModified || 0, sourceSize: sourceIdentity.sourceSize, sourceFingerprint: sourceIdentity.sourceFingerprint, thumbURL, sourceFile: file, inTimeline: false, _interpolated: null };
     estimatedAppBytes += estimatePhotoBytes(photos[id]);
     if (timestamp) {
       timeline.push(id);
@@ -1053,7 +1171,7 @@ async function handleFiles(files) {
     } else {
       unplaced.push(id);
     }
-    existingNames.add(file.name);
+    existingPhotosByName.set(file.name, photos[id]);
     processingState.processed++;
     updateProcessingProgress();
   }
@@ -1436,6 +1554,64 @@ function closeDryRunSummary() {
   document.getElementById('summaryModal').style.display = 'none';
 }
 
+function openPhotoViewer(event, id) {
+  event?.stopPropagation();
+  const photo = photos[String(id)];
+  if (!photo) return;
+
+  closePhotoViewer();
+  const overlay = document.getElementById('photoViewer');
+  const image = document.getElementById('viewerImage');
+  const fallback = document.getElementById('viewerFallback');
+  const title = document.getElementById('viewerTitle');
+  title.textContent = photo.name || '';
+  image.alt = photo.name || 'Photo';
+  image.style.display = 'none';
+  fallback.style.display = 'none';
+
+  if (photo.sourceFile) {
+    viewerObjectURL = URL.createObjectURL(photo.sourceFile);
+    image.onload = () => { image.style.display = 'block'; };
+    image.onerror = () => showViewerFallback(photo);
+    image.src = viewerObjectURL;
+  } else if (photo.thumbURL) {
+    image.onload = () => { image.style.display = 'block'; };
+    image.onerror = () => showViewerFallback(photo);
+    image.src = photo.thumbURL;
+  } else {
+    showViewerFallback(photo);
+  }
+
+  overlay.style.display = 'flex';
+  document.body.style.overflow = 'hidden';
+}
+
+function showViewerFallback(photo) {
+  const image = document.getElementById('viewerImage');
+  const fallback = document.getElementById('viewerFallback');
+  image.style.display = 'none';
+  fallback.textContent = `Preview unavailable for ${photo.name || 'this photo'}.`;
+  fallback.style.display = 'block';
+}
+
+function closePhotoViewer() {
+  const overlay = document.getElementById('photoViewer');
+  const image = document.getElementById('viewerImage');
+  if (viewerObjectURL) {
+    URL.revokeObjectURL(viewerObjectURL);
+    viewerObjectURL = null;
+  }
+  image.onload = null;
+  image.onerror = null;
+  image.removeAttribute('src');
+  overlay.style.display = 'none';
+  document.body.style.overflow = '';
+}
+
+function handleViewerBackgroundClick(event) {
+  if (event.target.id === 'photoViewer') closePhotoViewer();
+}
+
 async function importSessionFile(file) {
   try {
     const state = JSON.parse(await file.text());
@@ -1533,7 +1709,7 @@ function render() {
         ondragstart="onCardDragStart(event,${id},'pool')"
         ondragend="onCardDragEnd(event)"
         title="${p.name.replace(/"/g,'&quot;')}">
-        <div class="pool-thumb">${p.thumbURL ? `<img src="${p.thumbURL}">` : '🖼'}</div>
+        <div class="pool-thumb" onclick="openPhotoViewer(event,${id})">${p.thumbURL ? `<img src="${p.thumbURL}">` : '🖼'}</div>
         <div class="pool-name">${p.name}</div>
       </div>`;
     }).join('');
@@ -1581,7 +1757,7 @@ function render() {
       oncontextmenu="openCardContextMenu(event,${id},'timeline')"
       ondragstart="onCardDragStart(event,${id},'timeline')"
       ondragend="onCardDragEnd(event)">
-      <div class="photo-thumb">${p.thumbURL ? `<img src="${p.thumbURL}">` : '🖼'}</div>
+      <div class="photo-thumb" onclick="openPhotoViewer(event,${id})">${p.thumbURL ? `<img src="${p.thumbURL}">` : '🖼'}</div>
       <div class="photo-footer">
         <div class="photo-name">${p.name}</div>
         <div class="photo-time ${timeClass}">${timeStr}</div>
@@ -1626,6 +1802,10 @@ document.addEventListener('click', hideCardContextMenu);
 document.addEventListener('scroll', hideCardContextMenu, true);
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape') {
+    if (document.getElementById('photoViewer').style.display !== 'none') {
+      closePhotoViewer();
+      return;
+    }
     hideCardContextMenu();
     clearSelection();
   }
