@@ -4,9 +4,10 @@
 
 ### 1. Measure the current bottlenecks
 
-- [ ] Test loading, scrolling, dragging, and selecting 1,000–5,000 photos.
-- [ ] Record render time, scroll smoothness, memory usage, and browser heap usage.
-- [ ] Identify whether DOM size, image decoding, layout, sorting, or interpolation is the dominant cost.
+- [x] Test selecting, dragging, reordering, and scrolling with approximately 1,000 photos.
+- [x] Record interaction behavior and approximate tab memory usage.
+- [x] Identify the current bottlenecks: undo/redo, pool↔timeline moves, and separator feedback.
+- [ ] Measure loading and behavior at 5,000 photos.
 
 ### 2. Reduce unnecessary work during rendering
 
@@ -26,7 +27,7 @@
 
 - [x] Add CSS containment and `content-visibility` to photo-card containers.
 - [ ] Replace per-card inline event handlers with delegated events from the timeline and pool containers.
-- [ ] Use document fragments or equivalent batched DOM updates for visible-card changes.
+- [x] Use direct DOM moves or equivalent batched DOM updates for timeline changes.
 
 ### 5. Virtualize the unplaced-photo pool
 
@@ -53,3 +54,11 @@
 - [ ] Repeat the benchmark suite after each major optimization.
 - [ ] Verify behavior with thousands of photos, mixed image sizes, and missing thumbnails.
 - [ ] Document supported collection sizes and any browser-specific limitations.
+
+### 9. Next optimization order
+
+- [ ] Optimize undo/redo using compact operation or delta history instead of restoring the full photo collection.
+- [ ] Move cards between the pool and timeline incrementally, without rebuilding both lists.
+- [ ] Replace separator hover feedback with one stable insertion indicator positioned from the current drag location.
+- [ ] Delegate card and drag events from the list containers instead of embedding handlers on every card.
+- [ ] Re-test 1,000-photo interactions after each change and compare memory and response latency.
