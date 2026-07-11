@@ -1319,7 +1319,11 @@ function restoreEditorState(state) {
         </div>` + mkDropTarget(0);
       }
     }
-    if (poolChanged) reconcilePoolCards();
+    if (poolChanged) {
+      const enteringPool = unplaced.filter(id => !previousUnplaced.includes(id));
+      const leavingPool = previousUnplaced.filter(id => !unplaced.includes(id));
+      reconcilePoolCards(enteringPool.length ? enteringPool : leavingPool, enteringPool.length ? 'enter' : 'exit');
+    }
     updateMemoryStatus();
     updateStats();
     updateHistoryButtons();
@@ -1336,7 +1340,9 @@ function restoreEditorState(state) {
     if (enteringTimeline.length || leavingTimeline.length) {
       removeTimelineEntries(leavingTimeline);
       insertTimelineEntries(enteringTimeline);
-      reconcilePoolCards();
+      const enteringPool = unplaced.filter(id => !previousUnplaced.includes(id));
+      const leavingPool = previousUnplaced.filter(id => !unplaced.includes(id));
+      reconcilePoolCards(enteringPool.length ? enteringPool : leavingPool, enteringPool.length ? 'enter' : 'exit');
       const movedIds = new Set([...enteringTimeline, ...leavingTimeline]);
       const affectedIds = getTransferAffectedIds(previousTimeline, timeline, movedIds);
       if (!timeline.length) {
@@ -2234,7 +2240,7 @@ function deletePhotos(ids) {
       <p>Drag photos from the left panel into this timeline.<br>Set at least two timestamps to enable interpolation.</p>
     </div>` + mkDropTarget(0);
   }
-  if (poolChanged) reconcilePoolCards();
+  if (poolChanged) reconcilePoolCards(ids, 'exit');
   updateMemoryStatus();
   updateHistoryButtons();
   updateStats();
@@ -2410,24 +2416,27 @@ function poolCardsById() {
     .map(card => [card.dataset.photoId, card]));
 }
 
-function reconcilePoolCards() {
+function reconcilePoolCards(animateIds = [], mode = 'enter') {
   const grid = document.getElementById('poolGrid');
+  if (mode === 'exit') animateCardIdsExit(grid, animateIds);
   if (!unplaced.length) {
     grid.innerHTML = '<div class="pool-empty" style="color:#4a4a58;font-size:12px;padding:6px;grid-column:1/-1">All photos placed ✓</div>';
     return;
   }
   grid.innerHTML = poolGroupedMarkup();
+  if (mode === 'enter') animateCardIdsEntrance(grid, animateIds);
 }
 
 function removePoolCards(ids) {
-  reconcilePoolCards();
+  reconcilePoolCards(ids, 'exit');
 }
 
 function insertPoolCards(ids) {
-  reconcilePoolCards();
+  reconcilePoolCards(ids, 'enter');
 }
 
 function removeTimelineEntries(ids) {
+  animateCardIdsExit(document.getElementById('timelineList'), ids);
   if (rerenderVirtualTimelineAfterChange()) return;
   const list = document.getElementById('timelineList');
   if (!list.querySelector('.timeline-entry')) return;
@@ -2449,7 +2458,10 @@ function removeTimelineEntries(ids) {
 }
 
 function insertTimelineEntries(ids) {
-  if (rerenderVirtualTimelineAfterChange()) return;
+  if (rerenderVirtualTimelineAfterChange()) {
+    animateCardIdsEntrance(document.getElementById('timelineList'), ids);
+    return;
+  }
   const inserted = new Set(ids.map(String));
   const list = document.getElementById('timelineList');
   if (ids.length > 24) {
@@ -2471,6 +2483,7 @@ function insertTimelineEntries(ids) {
       ? list.querySelector(`.photo-card[data-photo-id="${nextExistingId}"]`)?.closest('.timeline-entry') : null;
     list.insertBefore(elementFromMarkup(timelineEntryMarkup(id)), nextEntry);
   });
+  animateCardIdsEntrance(list, ids);
 }
 
 function finalizeIncrementalTransfer(refreshIds = timeline, animateIds = null) {
@@ -2601,11 +2614,11 @@ function getTimelineChangeAffectedIds(previousTimeline, nextTimeline, enteringId
 
 function reorderTimelineDom(affectedIds, animateIds = affectedIds) {
   if (shouldVirtualizeTimeline()) {
-    const oldRects = getTimelineCardRects(animateIds);
+    const oldRects = getTimelineCardRects();
     invalidateVirtualTimeline();
     renderVirtualTimeline();
     refreshTimelineCards(affectedIds);
-    animateTimelineCards(oldRects, animateIds);
+    animateTimelineCards(oldRects);
     updateMemoryStatus();
     updateHistoryButtons();
     updateStats();
@@ -2624,7 +2637,7 @@ function reorderTimelineDom(affectedIds, animateIds = affectedIds) {
     return;
   }
 
-  const oldRects = getTimelineCardRects(animateIds);
+  const oldRects = getTimelineCardRects();
   let nextEntry = list.firstElementChild;
   timeline.forEach(id => {
     const entry = entriesById.get(String(id));
@@ -2633,7 +2646,7 @@ function reorderTimelineDom(affectedIds, animateIds = affectedIds) {
   });
   affectedIds.forEach(id => refreshTimelineCardDisplay(String(id)));
   setTimeout(updateTimelineLineEnds, 0);
-  animateTimelineCards(oldRects, animateIds);
+  animateTimelineCards(oldRects);
   updateMemoryStatus();
   updateHistoryButtons();
   updateStats();
@@ -3322,6 +3335,7 @@ function getTimelineCardRects(onlyIds = null) {
 }
 
 function animateTimelineCards(oldRects, onlyIds = null) {
+  if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return;
   if ((!oldRects || !oldRects.size) && !onlyIds?.size) return;
   requestAnimationFrame(() => {
     document.querySelectorAll('#timelineList .photo-card[data-photo-id]').forEach(el => {
@@ -3331,7 +3345,7 @@ function animateTimelineCards(oldRects, onlyIds = null) {
         el.animate([
           { opacity: 0, transform: 'scale(0.96)' },
           { opacity: 1, transform: 'scale(1)' }
-        ], { duration: 160, easing: 'ease-out' });
+        ], { duration: 192, easing: 'ease-out' });
         return;
       }
       const newRect = el.getBoundingClientRect();
@@ -3341,8 +3355,49 @@ function animateTimelineCards(oldRects, onlyIds = null) {
       el.animate([
         { transform: `translate(${dx}px, ${dy}px)` },
         { transform: 'translate(0, 0)' }
-      ], { duration: 220, easing: 'cubic-bezier(.2, .8, .2, 1)' });
+      ], { duration: 264, easing: 'cubic-bezier(.2, .8, .2, 1)' });
     });
+  });
+}
+
+function animateCardEntrance(card, delay = 0) {
+  if (!card || window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return;
+  card.animate([
+    { opacity: 0, transform: 'scale(0.94) translateY(6px)' },
+    { opacity: 1, transform: 'scale(1) translateY(0)' }
+  ], { duration: 216, delay, easing: 'cubic-bezier(.2, .8, .2, 1)' });
+}
+
+function animateCardExit(card, delay = 0) {
+  if (!card?.isConnected || window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return;
+  const rect = card.getBoundingClientRect();
+  const ghost = card.cloneNode(true);
+  Object.assign(ghost.style, {
+    position: 'fixed', left: `${rect.left}px`, top: `${rect.top}px`,
+    width: `${rect.width}px`, height: `${rect.height}px`, margin: '0',
+    zIndex: '300', pointerEvents: 'none'
+  });
+  document.body.appendChild(ghost);
+  const animation = ghost.animate([
+    { opacity: 1, transform: 'scale(1)' },
+    { opacity: 0, transform: 'scale(0.92) translateY(-5px)' }
+  ], { duration: 216, delay, easing: 'ease-in', fill: 'forwards' });
+  animation.onfinish = () => ghost.remove();
+}
+
+function animateCardIdsExit(container, ids) {
+  const selected = new Set(ids.map(String));
+  let index = 0;
+  container.querySelectorAll('[data-photo-id]').forEach(card => {
+    if (selected.has(card.dataset.photoId)) animateCardExit(card, Math.min(index++ * 12, 120));
+  });
+}
+
+function animateCardIdsEntrance(container, ids) {
+  const selected = new Set(ids.map(String));
+  let index = 0;
+  container.querySelectorAll('[data-photo-id]').forEach(card => {
+    if (selected.has(card.dataset.photoId)) animateCardEntrance(card, Math.min(index++ * 18, 180));
   });
 }
 
