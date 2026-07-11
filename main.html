@@ -89,7 +89,7 @@
 
   /* ── LEFT PANEL ── */
   .sidebar {
-    width: 260px;
+    width: var(--sidebar-width, 260px);
     background: #13131a;
     border-right: 1px solid #2e2e3a;
     display: flex;
@@ -97,6 +97,16 @@
     flex-shrink: 0;
     overflow: hidden;
   }
+  .sidebar-resizer {
+    width: 6px;
+    flex: 0 0 6px;
+    background: #1b1b25;
+    border-right: 1px solid #2e2e3a;
+    cursor: col-resize;
+    touch-action: none;
+    user-select: none;
+  }
+  .sidebar-resizer:hover, .sidebar-resizer.dragging { background: #34344a; }
 
   .sidebar-section {
     padding: 14px 16px;
@@ -754,6 +764,7 @@
       <div class="pool-grid" id="poolGrid"></div>
     </div>
   </div>
+  <div class="sidebar-resizer" id="sidebarResizer" role="separator" aria-label="Resize unplaced photos sidebar" aria-orientation="vertical"></div>
 
   <div class="timeline-area">
     <div class="timeline-toolbar">
@@ -853,6 +864,7 @@ let selectionAnchor = null;
 let unplacedSortMode = 'name';
 let importConcurrencyMultiplier = 2;
 let incrementalImportEnabled = true;
+let sidebarWidth = 260;
 let viewerObjectURL = null;
 let viewerPhotoId = null;
 let pointerDrag = null;
@@ -966,6 +978,41 @@ function saveSettings() {
   );
   incrementalImportEnabled = document.getElementById('incrementalImport').checked;
   closeSettings();
+  scheduleSessionSave();
+}
+
+function normalizeSidebarWidth(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.max(180, Math.min(500, Math.round(parsed))) : 260;
+}
+
+function applySidebarWidth() {
+  document.documentElement.style.setProperty('--sidebar-width', `${sidebarWidth}px`);
+}
+
+let sidebarResize = null;
+function onSidebarResizePointerDown(event) {
+  if (event.button !== 0) return;
+  sidebarResize = { startX: event.clientX, startWidth: sidebarWidth };
+  event.currentTarget.classList.add('dragging');
+  event.currentTarget.setPointerCapture(event.pointerId);
+  event.currentTarget.addEventListener('pointermove', onSidebarResizePointerMove);
+  event.currentTarget.addEventListener('pointerup', onSidebarResizePointerUp, { once: true });
+  event.currentTarget.addEventListener('pointercancel', onSidebarResizePointerUp, { once: true });
+  event.preventDefault();
+}
+
+function onSidebarResizePointerMove(event) {
+  if (!sidebarResize) return;
+  sidebarWidth = normalizeSidebarWidth(sidebarResize.startWidth + event.clientX - sidebarResize.startX);
+  applySidebarWidth();
+}
+
+function onSidebarResizePointerUp(event) {
+  const resizer = event.currentTarget;
+  resizer.classList.remove('dragging');
+  resizer.removeEventListener('pointermove', onSidebarResizePointerMove);
+  sidebarResize = null;
   scheduleSessionSave();
 }
 
@@ -1250,6 +1297,7 @@ function buildSessionState() {
     unplacedSortMode,
     importConcurrencyMultiplier,
     incrementalImportEnabled,
+    sidebarWidth,
     timeline: [...timeline],
     unplaced: [...unplaced],
     photos: cleanPhotos
@@ -1264,6 +1312,8 @@ function restoreSessionState(state) {
     ? state.unplacedSortMode : 'name';
   importConcurrencyMultiplier = normalizeImportConcurrency(state.importConcurrencyMultiplier);
   incrementalImportEnabled = state.incrementalImportEnabled !== false;
+  sidebarWidth = normalizeSidebarWidth(state.sidebarWidth);
+  applySidebarWidth();
   timeline = Array.isArray(state.timeline) ? state.timeline.map(String) : [];
   unplaced = Array.isArray(state.unplaced) ? state.unplaced.map(String) : [];
 
@@ -2983,6 +3033,7 @@ document.getElementById('timelineList').addEventListener('dblclick', onCardConta
 document.getElementById('poolGrid').addEventListener('pointerdown', onCardContainerPointerDown);
 document.getElementById('timelineList').addEventListener('pointerdown', onCardContainerPointerDown);
 document.getElementById('timelineList').addEventListener('contextmenu', onTimelineContextMenu);
+document.getElementById('sidebarResizer').addEventListener('pointerdown', onSidebarResizePointerDown);
 document.addEventListener('keydown', e => {
   if (document.getElementById('photoViewer').style.display !== 'none') {
     if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
