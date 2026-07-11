@@ -941,6 +941,7 @@ let pointerDrag = null;
 let suppressCardClick = false;
 let virtualTimelineKey = null;
 let virtualTimelineFrame = null;
+let timelineScrollAnimation = null;
 
 const CAM1 = 'DSC';
 const CAM2 = '976A';
@@ -986,6 +987,7 @@ const SESSION_RESTORE_YIELD_INTERVAL = 500;
 const VIRTUAL_TIMELINE_THRESHOLD = 200;
 const VIRTUAL_TIMELINE_OVERSCAN_ROWS = 10;
 const VIRTUAL_TIMELINE_RENDER_STRIDE_ROWS = 5;
+const STRUCTURAL_ANIMATION_SETTLE_MS = 480;
 let processingProgressTimer = null;
 const performanceStats = new Map();
 
@@ -2045,7 +2047,10 @@ function fmtTime(d) {
 }
 
 function sourceIds(source) {
-  return source === 'timeline' ? timeline : unplaced;
+  if (source !== 'timeline') return unplaced;
+  return timelineFilter === 'all'
+    ? timeline
+    : timeline.filter(id => timelineFilterKind(photos[id]) === timelineFilter);
 }
 
 // ── SELECTION, DRAGGING, AND INCREMENTAL DOM UPDATES ───────────────────────
@@ -2177,6 +2182,7 @@ function removeSelectedFromTimeline() {
   const flights = captureCardFlights(document.getElementById('timelineList'), ids);
 
   const previousTimeline = [...timeline];
+  const focusId = ids.length > 1 ? getRemovalFocusId(previousTimeline, ids) : null;
   pushHistory();
   const selected = new Set(ids);
   timeline = timeline.filter(id => !selected.has(id));
@@ -2193,6 +2199,7 @@ function removeSelectedFromTimeline() {
   insertPoolCards(ids, 'none');
   playCardFlights(flights, document.getElementById('poolGrid'));
   finalizeIncrementalTransfer(getTransferAffectedIds(previousTimeline, timeline, new Set(ids)));
+  focusTimelinePhotoIfNeeded(focusId);
 }
 
 function deleteSelectedPhotos() {
@@ -2224,6 +2231,7 @@ function deletePhotos(ids) {
   if (!ids.length) return;
   const start = performance.now();
   const previousTimeline = [...timeline];
+  const focusId = ids.length > 1 ? getRemovalFocusId(previousTimeline, ids) : null;
   const previousPhotos = Object.fromEntries(ids.map(id => [id, photos[id]]));
   pushHistory();
   const deleted = new Set(ids);
@@ -2255,6 +2263,7 @@ function deletePhotos(ids) {
   scheduleSessionSave();
   recordPerformance('Delete from Editor', start);
   recordPerformanceAfterPaint('Delete to paint', start);
+  focusTimelinePhotoIfNeeded(focusId);
 }
 
 function selectAllInActiveList() {
@@ -3356,6 +3365,72 @@ function getTimelineCardRects(onlyIds = null) {
   return rects;
 }
 
+function getRemovalFocusId(previousTimeline, ids) {
+  const removed = new Set(ids.map(String));
+  const lastIndex = Math.max(...ids.map(id => previousTimeline.indexOf(String(id))));
+  if (lastIndex < 0) return null;
+  for (let index = lastIndex + 1; index < previousTimeline.length; index++) {
+    if (!removed.has(String(previousTimeline[index]))) return String(previousTimeline[index]);
+  }
+  return null;
+}
+
+function focusTimelinePhotoIfNeeded(id) {
+  if (!id || !timeline.includes(String(id))) return;
+  const delay = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 0 : STRUCTURAL_ANIMATION_SETTLE_MS;
+  setTimeout(() => requestAnimationFrame(() => {
+    const scroll = document.querySelector('.timeline-scroll');
+    const card = document.querySelector(`#timelineList .photo-card[data-photo-id="${id}"]`);
+    const area = scroll?.getBoundingClientRect();
+    const rect = card?.getBoundingClientRect();
+    if (!card && timelineFilter !== 'all') return;
+    const safeTop = area ? area.top + Math.max(32, area.height * 0.2) : 0;
+    const safeBottom = area ? area.bottom - Math.max(32, area.height * 0.2) : 0;
+    if (area && rect && rect.top >= safeTop && rect.bottom <= safeBottom) return;
+
+    if (shouldVirtualizeTimeline()) {
+      const { columns, rowHeight } = virtualTimelineLayout();
+      const index = timelineDisplayIds().indexOf(String(id));
+      if (index < 0) return;
+      const row = Math.floor(index / columns);
+      animateTimelineScrollTo(scroll, Math.max(0, 16 + row * rowHeight - (scroll.clientHeight - rowHeight) / 2));
+      return;
+    }
+    if (card && area && rect) {
+      animateTimelineScrollTo(scroll, scroll.scrollTop + rect.top - area.top - (area.height - rect.height) / 2);
+    }
+  }), delay);
+}
+
+function cancelTimelineScrollAnimation() {
+  timelineScrollAnimation = null;
+}
+
+function animateTimelineScrollTo(scroll, targetTop) {
+  if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
+    scroll.scrollTop = targetTop;
+    return;
+  }
+  const startTop = scroll.scrollTop;
+  const distance = targetTop - startTop;
+  if (Math.abs(distance) < 2) return;
+  const token = {};
+  timelineScrollAnimation = token;
+  const start = performance.now();
+  const duration = Math.min(1200, Math.max(500, Math.abs(distance) * 0.6));
+  const frame = now => {
+    if (timelineScrollAnimation !== token) return;
+    const progress = Math.min(1, (now - start) / duration);
+    const eased = progress < 0.5
+      ? 2 * progress * progress
+      : 1 - Math.pow(-2 * progress + 2, 2) / 2;
+    scroll.scrollTop = startTop + distance * eased;
+    if (progress < 1) requestAnimationFrame(frame);
+    else timelineScrollAnimation = null;
+  };
+  requestAnimationFrame(frame);
+}
+
 function animateTimelineCards(oldRects, onlyIds = null) {
   if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return;
   if ((!oldRects || !oldRects.size) && !onlyIds?.size) return;
@@ -3671,6 +3746,8 @@ document.getElementById('poolGrid').addEventListener('pointerdown', onCardContai
 document.getElementById('timelineList').addEventListener('pointerdown', onCardContainerPointerDown);
 document.getElementById('timelineList').addEventListener('contextmenu', onTimelineContextMenu);
 document.querySelector('.timeline-scroll').addEventListener('scroll', scheduleVirtualTimelineRender, { passive: true });
+document.querySelector('.timeline-scroll').addEventListener('wheel', cancelTimelineScrollAnimation, { passive: true });
+document.querySelector('.timeline-scroll').addEventListener('pointerdown', cancelTimelineScrollAnimation);
 document.getElementById('sidebarResizer').addEventListener('pointerdown', onSidebarResizePointerDown);
 document.addEventListener('keydown', e => {
   if (document.getElementById('photoViewer').style.display !== 'none') {
