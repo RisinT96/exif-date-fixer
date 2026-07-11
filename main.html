@@ -6,11 +6,24 @@
 <title>Photo Timestamp Editor</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --color-bg: #1a1a1f;
+    --color-surface: #13131a;
+    --color-surface-raised: #1e1e28;
+    --color-border: #2e2e3a;
+    --color-text: #e0ddd8;
+    --color-text-strong: #c8c4be;
+    --color-muted: #8a8690;
+    --color-accent: #5b6af0;
+    --color-anchor: #4caf82;
+    --color-interpolated: #5b6af0;
+    --color-unplaced: #c87a30;
+  }
 
   body {
     font-family: 'Segoe UI', system-ui, sans-serif;
-    background: #1a1a1f;
-    color: #e0ddd8;
+    background: var(--color-bg);
+    color: var(--color-text);
     height: 100vh;
     display: flex;
     flex-direction: column;
@@ -19,8 +32,8 @@
 
   header {
     padding: 12px 20px;
-    background: #13131a;
-    border-bottom: 1px solid #2e2e3a;
+    background: var(--color-surface);
+    border-bottom: 1px solid var(--color-border);
     display: flex;
     align-items: center;
     gap: 16px;
@@ -31,7 +44,7 @@
     font-size: 15px;
     font-weight: 600;
     letter-spacing: 0.04em;
-    color: #c8c4be;
+    color: var(--color-text-strong);
   }
 
   .header-actions {
@@ -53,10 +66,10 @@
 
   .btn-ghost {
     background: transparent;
-    color: #8a8690;
-    border: 1px solid #2e2e3a;
+    color: var(--color-muted);
+    border: 1px solid var(--color-border);
   }
-  .btn-ghost:hover { background: #22222c; color: #c8c4be; }
+  .btn-ghost:hover { background: #22222c; color: var(--color-text-strong); }
   .btn:disabled {
     opacity: 0.42;
     cursor: not-allowed;
@@ -64,7 +77,7 @@
   }
 
   .btn-primary {
-    background: #5b6af0;
+    background: var(--color-accent);
     color: #fff;
   }
   .btn-primary:hover { background: #6b7aff; }
@@ -77,7 +90,7 @@
     text-align: right;
     font-variant-numeric: tabular-nums;
   }
-  .session-status.good { color: #4caf82; }
+  .session-status.good { color: var(--color-anchor); }
   .session-status.warn { color: #c87a30; }
   .session-status.bad { color: #e05a5a; }
 
@@ -95,7 +108,7 @@
     gap: 8px;
     background: #13131a;
     border-top: 1px solid #2e2e3a;
-    color: #8a8690;
+    color: var(--color-muted);
     font-size: 12px;
   }
   .zoom-bar button {
@@ -163,7 +176,7 @@
     display: none;
     margin-top: 10px;
     font-size: 11px;
-    color: #8a8690;
+    color: var(--color-muted);
   }
   .processing-status.active { display: block; }
   .progress-track {
@@ -421,8 +434,8 @@
   .photo-card:hover { border-color: #3a3a50; background: #22222e; }
   .photo-card.dragging { opacity: 0.4; cursor: grabbing; }
   .photo-card.selected { border-color: #8a90f0; box-shadow: 0 0 0 2px rgba(91,106,240,0.45); }
-  .photo-card.anchored { border-top: 3px solid #4caf82; }
-  .photo-card.interpolated { border-top: 3px solid #5b6af0; }
+  .photo-card.anchored { border-top: 3px solid var(--color-anchor); }
+  .photo-card.interpolated { border-top: 3px solid var(--color-interpolated); }
   .photo-card.unplaced-card { border-top: 3px solid #6a4a20; }
 
   .photo-thumb {
@@ -468,14 +481,15 @@
   .photo-footer {
     display: flex;
     flex-direction: column;
-    gap: 3px;
-    padding: 6px 8px;
+    gap: max(3px, calc(3px * var(--photo-text-scale, 1)));
+    padding: calc(6px * var(--photo-text-scale, 1)) calc(8px * var(--photo-text-scale, 1));
     min-width: 0;
   }
 
   .photo-info { display: contents; }
   .photo-name {
-    font-size: 11px;
+    font-size: max(11px, calc(11px * var(--photo-text-scale, 1)));
+    line-height: 1.25;
     font-weight: 500;
     color: #c8c4be;
     white-space: nowrap;
@@ -483,31 +497,32 @@
     text-overflow: ellipsis;
   }
   .photo-time {
-    font-size: 10px;
+    font-size: max(10px, calc(10px * var(--photo-text-scale, 1)));
+    line-height: 1.25;
     color: #6a6670;
     font-variant-numeric: tabular-nums;
   }
-  .photo-time.known { color: #4caf82; }
+  .photo-time.known { color: var(--color-anchor); }
   .photo-time.interpolated { color: #7b8af0; }
 
   .photo-badge {
-    font-size: 10px;
-    padding: 2px 5px;
+    font-size: max(10px, calc(10px * var(--photo-text-scale, 1)));
+    padding: calc(2px * var(--photo-text-scale, 1)) calc(5px * var(--photo-text-scale, 1));
     border-radius: 3px;
     font-weight: 600;
     letter-spacing: 0.04em;
     flex-shrink: 0;
   }
-  .badge-anchor { background: #1a3328; color: #4caf82; }
-  .badge-interp { background: #1a1c3a; color: #5b6af0; }
-  .badge-cam1 { background: #2a1e10; color: #c87a30; }
+  .badge-anchor { background: #1a3328; color: var(--color-anchor); }
+  .badge-interp { background: #1a1c3a; color: var(--color-interpolated); }
+  .badge-cam1 { background: #2a1e10; color: var(--color-unplaced); }
   .badge-cam2 { background: #1a2030; color: #4a90d0; }
   .badge-source { background: #25253a; color: #a5a8f0; }
 
   .card-actions {
     display: flex;
     align-items: center;
-    gap: 3px;
+    gap: max(3px, calc(3px * var(--photo-text-scale, 1)));
     margin-top: 1px;
   }
 
@@ -531,7 +546,7 @@
     border-radius: 3px;
     padding: 2px 4px;
     background: rgba(19,19,26,0.78);
-    color: #8a8690;
+    color: var(--color-muted);
     cursor: pointer;
     opacity: 0;
   }
@@ -575,7 +590,7 @@
     -webkit-user-drag: none;
     user-drag: none;
   }
-  .pool-name { font-size: 11px; color: #8a8690; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .pool-name { font-size: max(11px, calc(11px * var(--photo-text-scale, 1))); color: var(--color-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .sort-select {
     width: 100%;
     margin: 0 0 8px;
@@ -583,7 +598,7 @@
     border: 1px solid #2e2e3a;
     border-radius: 5px;
     background: #1e1e28;
-    color: #8a8690;
+    color: var(--color-muted);
     font-size: 11px;
   }
 
@@ -653,7 +668,7 @@
     box-shadow: 0 20px 60px rgba(0,0,0,0.5);
   }
   .modal h2 { font-size: 16px; margin-bottom: 6px; }
-  .modal p { font-size: 13px; color: #8a8690; margin-bottom: 16px; line-height: 1.5; }
+  .modal p { font-size: 13px; color: var(--color-muted); margin-bottom: 16px; line-height: 1.5; }
   .modal input[type="datetime-local"],
   .modal input[type="number"],
   .modal input[type="text"] {
@@ -682,7 +697,7 @@
     grid-template-columns: 1fr auto;
     gap: 7px 12px;
     font-size: 12px;
-    color: #8a8690;
+    color: var(--color-muted);
   }
   .summary-grid strong { color: #c8c4be; font-variant-numeric: tabular-nums; }
   .summary-errors { margin-top: 14px; color: #e05a5a; font-size: 11px; line-height: 1.5; }
@@ -706,11 +721,28 @@
     left: 20px; bottom: 16px;
     max-width: calc(100% - 100px);
     color: #c8c4be;
-    font-size: 12px;
+    font-size: 15px;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
   }
+  .viewer-meta {
+    position: fixed;
+    top: 8vh; left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 8px 14px;
+    border: 1px solid rgba(255,255,255,0.2);
+    border-radius: 10px;
+    background: rgba(19,19,26,0.84);
+    backdrop-filter: blur(8px);
+    pointer-events: none;
+    text-shadow: 0 1px 4px rgba(0,0,0,0.8);
+  }
+  .viewer-meta .photo-time { font-size: 17px; }
+  .viewer-meta .photo-badge { font-size: 14px; padding: 4px 8px; }
   .viewer-close {
     position: fixed;
     top: 14px; right: 18px;
@@ -730,7 +762,7 @@
     display: flex; gap: 8px;
   }
   .viewer-actions button { background: rgba(30,30,40,0.88); }
-  .viewer-fallback { color: #8a8690; font-size: 14px; text-align: center; }
+  .viewer-fallback { color: var(--color-muted); font-size: 14px; text-align: center; }
   .session-restore {
     position: fixed; inset: 0; z-index: 300;
     display: flex; align-items: center; justify-content: center;
@@ -916,6 +948,7 @@
   <button class="viewer-close" type="button" onclick="closePhotoViewer()" aria-label="Close photo viewer">×</button>
   <img class="viewer-image" id="viewerImage" alt="">
   <div class="viewer-fallback" id="viewerFallback" style="display:none"></div>
+  <div class="viewer-meta" id="viewerMeta"></div>
   <div class="viewer-title" id="viewerTitle"></div>
 </div>
 
@@ -1120,6 +1153,7 @@ function setZoom(value, save = false) {
   const scale = zoomLevel / 100;
   document.documentElement.style.setProperty('--photo-card-width', `${160 * scale}px`);
   document.documentElement.style.setProperty('--photo-thumb-height', `${140 * scale}px`);
+  document.documentElement.style.setProperty('--photo-text-scale', scale);
   const range = document.getElementById('zoomRange');
   const label = document.getElementById('zoomValue');
   if (range) range.value = String(zoomLevel);
@@ -3320,6 +3354,7 @@ function openPhotoViewer(event, id) {
   const fallback = document.getElementById('viewerFallback');
   const title = document.getElementById('viewerTitle');
   title.textContent = photo.sourcePath || photo.name || '';
+  updateViewerMeta(photo);
   image.alt = photo.name || 'Photo';
   image.style.display = 'none';
   fallback.style.display = 'none';
@@ -3340,6 +3375,19 @@ function openPhotoViewer(event, id) {
   overlay.style.display = 'flex';
   document.body.style.overflow = 'hidden';
   if (photo.inTimeline) focusTimelinePhotoIfNeeded(photoId, true);
+}
+
+function updateViewerMeta(photo) {
+  const meta = document.getElementById('viewerMeta');
+  if (!meta) return;
+  const display = getDisplayTime(photo);
+  const isAnchor = photo.timestamp && !photo._interpolated;
+  const badge = isAnchor
+    ? '<span class="photo-badge badge-anchor">ANCHOR</span>'
+    : photo._interpolated ? '<span class="photo-badge badge-interp">~</span>' : '';
+  const source = sourceBadgeMarkup(photo, isAnchor);
+  const timeClass = isAnchor ? 'known' : photo._interpolated ? 'interpolated' : '';
+  meta.innerHTML = `${source}${badge}${display ? `<span class="photo-time ${timeClass}">${fmtTime(display.time)}</span>` : ''}`;
 }
 
 function showViewerFallback(photo) {
@@ -3655,7 +3703,7 @@ function virtualTimelineLayout() {
   const scale = zoomLevel / 100;
   const entryWidth = 160 * scale + 16;
   const columns = Math.max(1, Math.floor((scroll.clientWidth - 32 + 4) / (entryWidth + 4)));
-  return { scroll, columns, entryWidth, rowHeight: 140 * scale + 82 };
+  return { scroll, columns, entryWidth, rowHeight: (140 + 82) * scale };
 }
 
 function renderVirtualTimeline() {
