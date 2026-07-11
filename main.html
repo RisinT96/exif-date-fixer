@@ -2169,6 +2169,7 @@ function removeSelectedFromTimeline() {
   hideCardContextMenu();
   const ids = selectedIdsInSource('timeline');
   if (!ids.length) return;
+  const flights = captureCardFlights(document.getElementById('timelineList'), ids);
 
   const previousTimeline = [...timeline];
   pushHistory();
@@ -2183,8 +2184,9 @@ function removeSelectedFromTimeline() {
   selectedIds.clear();
   selectionAnchor = null;
   interpolateAll();
-  removeTimelineEntries(ids);
-  insertPoolCards(ids);
+  removeTimelineEntries(ids, false);
+  insertPoolCards(ids, 'none');
+  playCardFlights(flights, document.getElementById('poolGrid'));
   finalizeIncrementalTransfer(getTransferAffectedIds(previousTimeline, timeline, new Set(ids)));
 }
 
@@ -2431,14 +2433,18 @@ function removePoolCards(ids) {
   reconcilePoolCards(ids, 'exit');
 }
 
-function insertPoolCards(ids) {
-  reconcilePoolCards(ids, 'enter');
+function insertPoolCards(ids, mode = 'enter') {
+  reconcilePoolCards(ids, mode);
 }
 
-function removeTimelineEntries(ids) {
-  animateCardIdsExit(document.getElementById('timelineList'), ids);
-  if (rerenderVirtualTimelineAfterChange()) return;
+function removeTimelineEntries(ids, animateExit = true) {
   const list = document.getElementById('timelineList');
+  const oldRects = getTimelineCardRects();
+  if (animateExit) animateCardIdsExit(list, ids);
+  if (rerenderVirtualTimelineAfterChange()) {
+    animateTimelineCards(oldRects);
+    return;
+  }
   if (!list.querySelector('.timeline-entry')) return;
   const selected = new Set(ids.map(String));
   const entries = [...list.querySelectorAll('.timeline-entry')];
@@ -2449,12 +2455,14 @@ function removeTimelineEntries(ids) {
       if (!selected.has(id)) fragment.appendChild(entry);
     });
     list.replaceChildren(fragment);
+    animateTimelineCards(oldRects);
     return;
   }
   entries.forEach(entry => {
     const id = entry.querySelector('.photo-card[data-photo-id]')?.dataset.photoId;
     if (selected.has(id)) entry.remove();
   });
+  animateTimelineCards(oldRects);
 }
 
 function insertTimelineEntries(ids) {
@@ -2948,6 +2956,7 @@ function onDropTargetDrop(e, insertIdx) {
 function removeFromTimeline(id) {
   id = String(id);
   const start = performance.now();
+  const flights = captureCardFlights(document.getElementById('timelineList'), [id]);
   const previousTimeline = [...timeline];
   pushHistory();
   timeline = timeline.filter(x => x !== id);
@@ -2956,8 +2965,9 @@ function removeFromTimeline(id) {
   unplaced.push(id);
   sortUnplacedByName();
   interpolateAll();
-  removeTimelineEntries([id]);
-  insertPoolCards([id]);
+  removeTimelineEntries([id], false);
+  insertPoolCards([id], 'none');
+  playCardFlights(flights, document.getElementById('poolGrid'));
   finalizeIncrementalTransfer(getTransferAffectedIds(previousTimeline, timeline, new Set([id])));
   recordPerformance('Remove from Timeline', start);
   recordPerformanceAfterPaint('Remove to paint', start);
@@ -3398,6 +3408,43 @@ function animateCardIdsEntrance(container, ids) {
   let index = 0;
   container.querySelectorAll('[data-photo-id]').forEach(card => {
     if (selected.has(card.dataset.photoId)) animateCardEntrance(card, Math.min(index++ * 18, 180));
+  });
+}
+
+function captureCardFlights(container, ids) {
+  if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return [];
+  const selected = new Set(ids.map(String));
+  return [...container.querySelectorAll('[data-photo-id]')]
+    .filter(card => selected.has(card.dataset.photoId))
+    .map(card => {
+      const rect = card.getBoundingClientRect();
+      const ghost = card.cloneNode(true);
+      Object.assign(ghost.style, {
+        position: 'fixed', left: `${rect.left}px`, top: `${rect.top}px`,
+        width: `${rect.width}px`, height: `${rect.height}px`, margin: '0',
+        zIndex: '300', pointerEvents: 'none', transformOrigin: 'top left'
+      });
+      document.body.appendChild(ghost);
+      return { id: card.dataset.photoId, ghost };
+    });
+}
+
+function playCardFlights(flights, container) {
+  flights.forEach(({ id, ghost }, index) => {
+    const target = container.querySelector(`[data-photo-id="${id}"]`);
+    if (!target) { ghost.remove(); return; }
+    const from = ghost.getBoundingClientRect();
+    const to = target.getBoundingClientRect();
+    target.style.opacity = '0';
+    const animation = ghost.animate([
+      { transform: 'translate(0, 0) scale(1)', opacity: 1 },
+      { transform: `translate(${to.left - from.left}px, ${to.top - from.top}px) scale(${to.width / from.width}, ${to.height / from.height})`, opacity: 0.72 }
+    ], { duration: 264, delay: Math.min(index * 18, 180), easing: 'cubic-bezier(.2, .8, .2, 1)', fill: 'forwards' });
+    animation.onfinish = () => {
+      ghost.remove();
+      target.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 120, easing: 'ease-out' });
+      target.style.opacity = '';
+    };
   });
 }
 
