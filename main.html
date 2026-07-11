@@ -315,7 +315,7 @@
 
   .drop-target {
     width: 12px;
-    min-height: 214px;
+    min-height: calc(var(--photo-thumb-height, 140px) + 74px);
     border-radius: 999px;
     display: flex;
     align-items: stretch;
@@ -333,7 +333,6 @@
     left: calc(var(--photo-card-width, 160px) + 16px);
     top: 0;
   }
-  .line-end-target.line-end { display: flex; }
   .drop-target::before {
     content: '';
     width: 2px;
@@ -346,12 +345,6 @@
     opacity: 1;
   }
   .drop-target.active::before {
-    background: #4a4a5a;
-  }
-  .timeline-list.dragging .drop-target {
-    opacity: 1;
-  }
-  .timeline-list.dragging .drop-target::before {
     background: #4a4a5a;
   }
   .drop-indicator {
@@ -403,16 +396,6 @@
     background: #8a90f0;
     box-shadow: 0 0 14px rgba(138,144,240,0.65);
   }
-  .timeline-list.dragging .drop-target:hover {
-    width: 12px;
-    flex-basis: 12px;
-    background: rgba(91,106,240,0.10);
-  }
-  .timeline-list.dragging .drop-target:hover::before {
-    width: 4px;
-    background: #8a90f0;
-    box-shadow: 0 0 14px rgba(138,144,240,0.65);
-  }
 
   .photo-card {
     display: flex;
@@ -429,7 +412,7 @@
     flex: 0 0 var(--photo-card-width, 160px);
     will-change: transform;
     content-visibility: auto;
-    contain-intrinsic-size: 160px 214px;
+    contain-intrinsic-size: var(--photo-card-width, 160px) calc(var(--photo-thumb-height, 140px) + 74px);
   }
   .photo-card:hover { border-color: #3a3a50; background: #22222e; }
   .photo-card.dragging { opacity: 0.4; cursor: grabbing; }
@@ -997,6 +980,28 @@ const MIN_IMPORT_CONCURRENCY = 1;
 const IMPORT_UI_FLUSH_INTERVAL_MS = 350;
 const IMPORT_PROGRESS_UPDATE_INTERVAL_MS = 150;
 let processingProgressTimer = null;
+const performanceStats = new Map();
+
+function recordPerformance(label, start) {
+  const ms = performance.now() - start;
+  const stat = performanceStats.get(label) || { count: 0, last: 0, max: 0 };
+  stat.count++;
+  stat.last = ms;
+  stat.max = Math.max(stat.max, ms);
+  performanceStats.set(label, stat);
+}
+
+function recordPerformanceAfterPaint(label, start) {
+  requestAnimationFrame(() => requestAnimationFrame(() => recordPerformance(label, start)));
+}
+
+function performanceSummaryMarkup() {
+  if (!performanceStats.size) return '';
+  const rows = [...performanceStats].map(([label, stat]) =>
+    `<div>${escapeHtml(label)} (${stat.count})</div><strong>${stat.last.toFixed(0)} ms · max ${stat.max.toFixed(0)} ms</strong>`
+  ).join('');
+  return `<div class="summary-grid" style="margin-top:16px"><div style="grid-column:1/-1"><strong>Performance (current session)</strong></div>${rows}</div>`;
+}
 
 // ── PROCESSING STATUS, MEMORY, AND HISTORY ─────────────────────────────────
 function updateProcessingProgress() {
@@ -1277,20 +1282,65 @@ function restoreEditorState(state) {
     return;
   }
 
+  const previousPhotoIds = new Set(Object.keys(previousPhotos));
+  const statePhotoIds = new Set(state.photoIds);
+  const addedPhotoIds = state.photoIds.filter(id => !previousPhotoIds.has(id));
+  const removedPhotoIds = Object.keys(previousPhotos).filter(id => !statePhotoIds.has(id));
+  if (addedPhotoIds.length + removedPhotoIds.length <= 24
+      && addedPhotoIds.length + removedPhotoIds.length > 0) {
+    const previousTimelineIds = new Set(previousTimeline);
+    const nextTimelineIds = new Set(timeline);
+    const enteringTimeline = timeline.filter(id => !previousTimelineIds.has(id));
+    const leavingTimeline = previousTimeline.filter(id => !nextTimelineIds.has(id));
+    const timelineChanged = enteringTimeline.length || leavingTimeline.length;
+    const poolChanged = !arraysEqual(previousUnplaced, unplaced);
+
+    if (timelineChanged) {
+      removeTimelineEntries(leavingTimeline);
+      insertTimelineEntries(enteringTimeline);
+      if (timeline.length) {
+        refreshTimelineCards(getTimelineChangeAffectedIds(
+          previousTimeline, timeline, enteringTimeline, leavingTimeline, previousPhotos
+        ));
+        setTimeout(updateTimelineLineEnds, 0);
+      } else {
+        document.getElementById('timelineList').innerHTML = `<div class="empty-state">
+          <h2>Drag photos here</h2>
+          <p>Drag photos from the left panel into this timeline.<br>Set at least two timestamps to enable interpolation.</p>
+        </div>` + mkDropTarget(0);
+      }
+    }
+    if (poolChanged) reconcilePoolCards();
+    updateMemoryStatus();
+    updateStats();
+    updateHistoryButtons();
+    document.getElementById('exportBtn').disabled = !timeline.length;
+    scheduleSessionSave();
+    return;
+  }
+
   if (samePhotos) {
     const previousTimelineIds = new Set(previousTimeline);
     const nextTimelineIds = new Set(timeline);
     const enteringTimeline = timeline.filter(id => !previousTimelineIds.has(id));
     const leavingTimeline = previousTimeline.filter(id => !nextTimelineIds.has(id));
     if (enteringTimeline.length || leavingTimeline.length) {
-      removePoolCards(enteringTimeline);
       removeTimelineEntries(leavingTimeline);
-      insertPoolCards(leavingTimeline);
       insertTimelineEntries(enteringTimeline);
+      reconcilePoolCards();
       const movedIds = new Set([...enteringTimeline, ...leavingTimeline]);
       const affectedIds = getTransferAffectedIds(previousTimeline, timeline, movedIds);
-      if (timeline.length) reorderTimelineDom(affectedIds, new Set());
-      else finalizeIncrementalTransfer(affectedIds);
+      if (!timeline.length) {
+        finalizeIncrementalTransfer(affectedIds);
+        return;
+      }
+      refreshTimelineCards(affectedIds);
+      setTimeout(updateTimelineLineEnds, 0);
+      updateMemoryStatus();
+      updateStats();
+      updateHistoryButtons();
+      document.getElementById('exportBtn').disabled = false;
+      scheduleSessionSave();
       return;
     }
   }
@@ -1306,16 +1356,22 @@ function updateHistoryButtons() {
 
 function undoLastChange() {
   if (!historyPast.length) return;
+  const start = performance.now();
   historyFuture.push(captureEditorState());
   restoreEditorState(historyPast.pop());
   updateHistoryButtons();
+  recordPerformance('Undo', start);
+  recordPerformanceAfterPaint('Undo to paint', start);
 }
 
 function redoLastChange() {
   if (!historyFuture.length) return;
+  const start = performance.now();
   historyPast.push(captureEditorState());
   restoreEditorState(historyFuture.pop());
   updateHistoryButtons();
+  recordPerformance('Redo', start);
+  recordPerformanceAfterPaint('Redo to paint', start);
 }
 
 function pushHistory() {
@@ -1431,6 +1487,7 @@ function setSessionRestoreProgress(processed, total, label = 'Restoring photos')
 }
 
 async function restoreSessionState(state, onProgress = null) {
+  const start = performance.now();
   photos = {};
   estimatedAppBytes = 0;
   nextId = Number(state.nextId) || 0;
@@ -1501,6 +1558,7 @@ async function restoreSessionState(state, onProgress = null) {
   nextId = Math.max(nextId, maxId + 1);
   sortUnplacedByName();
   interpolateAll();
+  recordPerformance('Restore data', start);
 }
 
 function scheduleSessionSave() {
@@ -1514,8 +1572,12 @@ async function saveSessionNow() {
   if (!sessionReady) return;
   clearTimeout(saveTimer);
   try {
+    const buildStart = performance.now();
     const state = buildSessionState();
+    recordPerformance('Build session save', buildStart);
+    const writeStart = performance.now();
     await withSessionStore('readwrite', store => store.put(state, SESSION_KEY));
+    recordPerformance('Write session save', writeStart);
     const count = Object.keys(photos).length;
     setSessionStatus(count ? 'Session saved' : 'Empty session saved', 'good');
   } catch (err) {
@@ -1890,6 +1952,7 @@ function handleFileDrop(e) {
 // ── TIMELINE INTERPOLATION ─────────────────────────────────────────────────
 // The implementation uses anchor passes rather than repeated timeline scans.
 function interpolateAll() {
+  const start = performance.now();
   const previousAnchors = new Array(timeline.length).fill(-1);
   const nextAnchors = new Array(timeline.length).fill(-1);
   let previousAnchor = -1;
@@ -1928,6 +1991,7 @@ function interpolateAll() {
       p._interpolated = null;
     }
   }
+  recordPerformance('Interpolation', start);
 }
 
 function estimateGap() {
@@ -2136,6 +2200,7 @@ function restoreSelectedTimestamps() {
 function deletePhotos(ids) {
   ids = [...new Set(ids.map(String))].filter(id => photos[id]);
   if (!ids.length) return;
+  const start = performance.now();
   pushHistory();
   const deleted = new Set(ids);
   timeline = timeline.filter(id => !deleted.has(String(id)));
@@ -2146,6 +2211,8 @@ function deletePhotos(ids) {
   interpolateAll();
   recalculateEstimatedAppBytes();
   render({ animate: false });
+  recordPerformance('Delete from Editor', start);
+  recordPerformanceAfterPaint('Delete to paint', start);
 }
 
 function selectAllInActiveList() {
@@ -2328,8 +2395,8 @@ function insertPoolCards(ids) {
 }
 
 function removeTimelineEntries(ids) {
-  if (!timeline.length) return;
   const list = document.getElementById('timelineList');
+  if (!list.querySelector('.timeline-entry')) return;
   const selected = new Set(ids.map(String));
   const entries = [...list.querySelectorAll('.timeline-entry')];
   if (ids.length > 24) {
@@ -2396,12 +2463,12 @@ function finalizeIncrementalTransfer(refreshIds = timeline, animateIds = null) {
 }
 
 function getAffectedTimelineIds(previousTimeline, nextTimeline, movedIds) {
-  // Moving an anchor can change every interpolated value in the timeline if
-  // it crosses an anchor or changes the spacing of an anchor span. Refreshing
-  // all card displays is limited to anchor moves; normal photo reorders keep
-  // using the smaller affected range.
   const anchorMoved = [...movedIds].some(id => isTimelineAnchor(id));
-  if (anchorMoved) return new Set([...previousTimeline, ...nextTimeline]);
+  if (anchorMoved) return new Set([
+    ...getAnchorSpanIds(previousTimeline, movedIds),
+    ...getAnchorSpanIds(nextTimeline, movedIds),
+    ...getTimelineEdgeInterpolationIds(nextTimeline)
+  ]);
   let start = Infinity;
   let end = -1;
   for (const id of movedIds) {
@@ -2412,6 +2479,16 @@ function getAffectedTimelineIds(previousTimeline, nextTimeline, movedIds) {
   return new Set([
     ...previousTimeline.slice(start, end + 1),
     ...nextTimeline.slice(start, end + 1)
+  ]);
+}
+
+function getTimelineEdgeInterpolationIds(timelineIds) {
+  const firstAnchor = timelineIds.findIndex(isTimelineAnchor);
+  const lastAnchor = timelineIds.findLastIndex(isTimelineAnchor);
+  if (firstAnchor < 0) return new Set(timelineIds);
+  return new Set([
+    ...timelineIds.slice(0, firstAnchor + 1),
+    ...timelineIds.slice(lastAnchor)
   ]);
 }
 
@@ -2464,6 +2541,27 @@ function getTransferAffectedIds(previousTimeline, nextTimeline, movedIds) {
     ...getAnchorSpanIds(previousTimeline, movedIds),
     ...getAnchorSpanIds(nextTimeline, movedIds)
   ]);
+}
+
+function getTimelineChangeAffectedIds(previousTimeline, nextTimeline, enteringIds, leavingIds, previousPhotos) {
+  const positions = enteringIds.map(id => nextTimeline.indexOf(id));
+  leavingIds.forEach(id => {
+    const index = previousTimeline.indexOf(id);
+    if (index >= 0) positions.push(Math.max(0, index - 1), Math.min(nextTimeline.length - 1, index));
+  });
+  if (!positions.length || !nextTimeline.length) return new Set();
+
+  const anchorChanged = enteringIds.some(isTimelineAnchor)
+    || leavingIds.some(id => previousPhotos[id]?.timestamp && !previousPhotos[id]._interpolated);
+  let start = Math.min(...positions);
+  let end = Math.max(...positions);
+  if (anchorChanged) {
+    start = Math.max(0, start - 1);
+    end = Math.min(nextTimeline.length - 1, end + 1);
+  }
+  while (start > 0 && !isTimelineAnchor(nextTimeline[start])) start--;
+  while (end < nextTimeline.length - 1 && !isTimelineAnchor(nextTimeline[end])) end++;
+  return new Set(nextTimeline.slice(start, end + 1));
 }
 
 function reorderTimelineDom(affectedIds, animateIds = affectedIds) {
@@ -2533,7 +2631,7 @@ function onCardPointerDown(event, id, source) {
     id: String(id), source, pointerId: event.pointerId,
     startX: event.clientX, startY: event.clientY,
     lastX: event.clientX, lastY: event.clientY,
-    active: false, dropTarget: null, card: event.currentTarget, ghost: null
+    active: false, dropTarget: null, card: event.currentTarget, ghost: null, lineEndTargets: []
   };
   document.addEventListener('pointermove', onPointerDragMove, { passive: false });
   document.addEventListener('pointerup', onPointerDragEnd);
@@ -2551,12 +2649,13 @@ function beginPointerDrag(event) {
   }
   dragState = { source, ids: selectedIdsInSource(source) };
   pointerDrag.active = true;
+  const timelineList = document.getElementById('timelineList');
+  timelineList.classList.add('dragging');
   pointerDrag.dropZones = buildDropZones();
   const ghost = createDragGhost(id);
   document.body.appendChild(ghost);
   pointerDrag.ghost = ghost;
   moveDragGhost(event.clientX, event.clientY);
-  document.getElementById('timelineList').classList.add('dragging');
   dragState.ids.forEach(selectedId => {
     document.querySelector(`[data-photo-id="${selectedId}"]`)?.classList.add('dragging');
   });
@@ -2611,6 +2710,7 @@ function cancelPointerDrag() {
 
 function finishPointerDrag() {
   pointerDrag?.ghost?.remove();
+  pointerDrag?.lineEndTargets?.forEach(target => { target.style.display = ''; });
   pointerDrag = null;
   dragState = null;
   document.removeEventListener('pointermove', onPointerDragMove);
@@ -2651,27 +2751,42 @@ function getDropTargetAtPoint(x, y) {
 }
 
 function buildDropZones() {
+  const start = performance.now();
+  pointerDrag?.lineEndTargets?.forEach(target => { target.style.display = ''; });
   const entries = [...document.querySelectorAll('#timelineList .timeline-entry:not(.filtered-out)')];
+  const scroll = document.querySelector('.timeline-scroll');
+  if (!entries.length || !scroll) return [];
+  const scale = zoomLevel / 100;
+  const entryWidth = 160 * scale + 16;
+  const columns = Math.max(1, Math.floor((scroll.clientWidth - 32 + 4) / (entryWidth + 4)));
+  const rowHeight = 140 * scale + 82;
+  const first = Math.max(0, (Math.floor(Math.max(0, scroll.scrollTop - 16) / rowHeight) - 2) * columns);
+  const last = Math.min(entries.length, (Math.ceil((scroll.scrollTop + scroll.clientHeight) / rowHeight) + 3) * columns);
+  const visibleEntries = entries.slice(first, last);
   const zones = [];
-  entries.forEach((entry, index) => {
+  const lineEndTargets = [];
+  visibleEntries.forEach((entry, index) => {
     const card = entry.querySelector('.photo-card[data-photo-id]');
     const target = entry.querySelector('.drop-target:not(.line-end-target)');
     if (!card || !target) return;
     const cardRect = card.getBoundingClientRect();
     const targetRect = target.getBoundingClientRect();
-    const previousEntry = entries[index - 1];
+    const previousEntry = entries[first + index - 1];
     const previousCard = previousEntry?.querySelector('.photo-card[data-photo-id]');
-    const sameRow = previousEntry && previousEntry.offsetTop === entry.offsetTop;
-    const previousRect = sameRow ? previousCard?.getBoundingClientRect() : null;
+    const previousRect = previousCard?.getBoundingClientRect();
+    const sameRow = previousRect && Math.abs(previousRect.top - cardRect.top) < 1;
     zones.push({
       target,
       rect: targetRect,
-      left: previousRect ? previousRect.left + previousRect.width * 0.7 : targetRect.left - 16,
+      left: sameRow ? previousRect.left + previousRect.width * 0.7 : targetRect.left - 16,
       right: cardRect.left + cardRect.width * 0.3
     });
 
-    const lineEndTarget = entry.querySelector('.line-end-target.line-end');
-    if (lineEndTarget) {
+    const lineEndTarget = entry.querySelector('.line-end-target');
+    const nextCard = entries[first + index + 1]?.querySelector('.photo-card[data-photo-id]');
+    const nextRect = nextCard?.getBoundingClientRect();
+    if (lineEndTarget && (!nextRect || Math.abs(nextRect.top - cardRect.top) >= 1)) {
+      lineEndTarget.style.display = 'flex';
       const lineEndRect = lineEndTarget.getBoundingClientRect();
       zones.push({
         target: lineEndTarget,
@@ -2679,8 +2794,11 @@ function buildDropZones() {
         left: cardRect.left + cardRect.width * 0.7,
         right: lineEndRect.right + 16
       });
+      lineEndTargets.push(lineEndTarget);
     }
   });
+  if (pointerDrag) pointerDrag.lineEndTargets = lineEndTargets;
+  recordPerformance('Build drop zones', start);
   return zones;
 }
 
@@ -2716,6 +2834,7 @@ function onDropTargetDrop(e, insertIdx) {
   e.preventDefault();
   hideDropIndicator();
   if (!dragState) return;
+  const start = performance.now();
   if (insertIdx == null) {
     const target = e.currentTarget;
     const entry = target.closest('.timeline-entry');
@@ -2741,6 +2860,8 @@ function onDropTargetDrop(e, insertIdx) {
     removePoolCards(ids);
     insertTimelineEntries(ids);
     finalizeIncrementalTransfer(getTransferAffectedIds(previousTimeline, timeline, movedIds), movedIds);
+    recordPerformance('Drop to Timeline', start);
+    recordPerformanceAfterPaint('Drop to Timeline paint', start);
     return;
   } else if (source === 'timeline') {
     const previousTimeline = [...timeline];
@@ -2754,14 +2875,19 @@ function onDropTargetDrop(e, insertIdx) {
     interpolateAll();
     const affectedIds = getAffectedTimelineIds(previousTimeline, timeline, movedIds);
     reorderTimelineDom(affectedIds, new Set(ids));
+    recordPerformance('Reorder Timeline', start);
+    recordPerformanceAfterPaint('Reorder Timeline paint', start);
     return;
   }
   interpolateAll();
   render({ renderPool: source !== 'timeline', animateIds: movedIds });
+  recordPerformance('Drop render', start);
+  recordPerformanceAfterPaint('Drop render paint', start);
 }
 
 function removeFromTimeline(id) {
   id = String(id);
+  const start = performance.now();
   const previousTimeline = [...timeline];
   pushHistory();
   timeline = timeline.filter(x => x !== id);
@@ -2773,6 +2899,8 @@ function removeFromTimeline(id) {
   removeTimelineEntries([id]);
   insertPoolCards([id]);
   finalizeIncrementalTransfer(getTransferAffectedIds(previousTimeline, timeline, new Set([id])));
+  recordPerformance('Remove from Timeline', start);
+  recordPerformanceAfterPaint('Remove to paint', start);
 }
 
 function openTimestampModal(id) {
@@ -2994,6 +3122,7 @@ function showDryRunSummary() {
       <div>Missing timestamps</div><strong>${missing.length}</strong>
       ${sourceRows}
     </div>
+    ${performanceSummaryMarkup()}
     ${errors.length ? `<div class="summary-errors"><strong>Processing errors (${errors.length})</strong>${errors.map(error => `<div>${escapeHtml(error)}</div>`).join('')}</div>` : ''}`;
   document.getElementById('summaryModal').style.display = 'flex';
 }
@@ -3174,6 +3303,12 @@ function animateTimelineCards(oldRects, onlyIds = null) {
 // Prefer the incremental selection, reorder, transfer, and history paths for
 // frequent interactions. This function is for startup and broad state changes.
 function render(options = {}) {
+  const start = performance.now();
+  renderNow(options);
+  recordPerformance('Render', start);
+}
+
+function renderNow(options = {}) {
   const oldTimelineRects = options.animate === false
     ? null
     : getTimelineCardRects(options.animateIds || null);
@@ -3255,12 +3390,6 @@ function render(options = {}) {
 }
 
 function updateTimelineLineEnds() {
-  const entries = [...document.querySelectorAll('#timelineList .timeline-entry:not(.filtered-out)')];
-  entries.forEach((entry, index) => {
-    const next = entries[index + 1];
-    const isLineEnd = !next || next.offsetTop > entry.offsetTop;
-    entry.querySelector('.line-end-target')?.classList.toggle('line-end', isLineEnd);
-  });
 }
 
 function mkDropTarget(idx, extraClass = '') {
