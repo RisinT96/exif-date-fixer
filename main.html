@@ -3422,7 +3422,8 @@ function captureCardFlights(container, ids) {
       Object.assign(ghost.style, {
         position: 'fixed', left: `${rect.left}px`, top: `${rect.top}px`,
         width: `${rect.width}px`, height: `${rect.height}px`, margin: '0',
-        zIndex: '300', pointerEvents: 'none', transformOrigin: 'top left'
+        zIndex: '300', pointerEvents: 'none', transformOrigin: 'top left',
+        contentVisibility: 'visible', contain: 'none', opacity: '1'
       });
       document.body.appendChild(ghost);
       return { id: card.dataset.photoId, ghost };
@@ -3431,20 +3432,27 @@ function captureCardFlights(container, ids) {
 
 function playCardFlights(flights, container) {
   flights.forEach(({ id, ghost }, index) => {
-    const target = container.querySelector(`[data-photo-id="${id}"]`);
-    if (!target) { ghost.remove(); return; }
-    const from = ghost.getBoundingClientRect();
-    const to = target.getBoundingClientRect();
-    target.style.opacity = '0';
-    const animation = ghost.animate([
-      { transform: 'translate(0, 0) scale(1)', opacity: 1 },
-      { transform: `translate(${to.left - from.left}px, ${to.top - from.top}px) scale(${to.width / from.width}, ${to.height / from.height})`, opacity: 0.72 }
-    ], { duration: 264, delay: Math.min(index * 18, 180), easing: 'cubic-bezier(.2, .8, .2, 1)', fill: 'forwards' });
-    animation.onfinish = () => {
-      ghost.remove();
-      target.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 120, easing: 'ease-out' });
-      target.style.opacity = '';
-    };
+    requestAnimationFrame(() => {
+      const target = container.querySelector(`[data-photo-id="${id}"]`);
+      if (!target) {
+        const fallback = ghost.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 216, easing: 'ease-in', fill: 'forwards' });
+        fallback.onfinish = () => ghost.remove();
+        return;
+      }
+      const from = ghost.getBoundingClientRect();
+      const to = target.getBoundingClientRect();
+      target.style.opacity = '0';
+      target.style.visibility = 'visible';
+      const animation = ghost.animate([
+        { transform: 'translate(0, 0) scale(1)', opacity: 1 },
+        { transform: `translate(${to.left - from.left}px, ${to.top - from.top}px) scale(${to.width / from.width}, ${to.height / from.height})`, opacity: 0.72 }
+      ], { duration: 264, delay: Math.min(index * 18, 180), easing: 'cubic-bezier(.2, .8, .2, 1)', fill: 'forwards' });
+      animation.onfinish = () => {
+        ghost.remove();
+        target.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 120, easing: 'ease-out' });
+        target.style.opacity = '';
+      };
+    });
   });
 }
 
