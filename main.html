@@ -223,7 +223,7 @@
     flex: 1;
     overflow-y: auto;
     padding: 10px;
-    scroll-behavior: smooth;
+    scroll-behavior: auto;
     overscroll-behavior: contain;
   }
 
@@ -985,9 +985,9 @@ const IMPORT_UI_FLUSH_INTERVAL_MS = 350;
 const IMPORT_PROGRESS_UPDATE_INTERVAL_MS = 150;
 const SESSION_RESTORE_YIELD_INTERVAL = 500;
 const VIRTUAL_TIMELINE_THRESHOLD = 200;
-const VIRTUAL_TIMELINE_OVERSCAN_ROWS = 10;
-const VIRTUAL_TIMELINE_RENDER_STRIDE_ROWS = 5;
-const STRUCTURAL_ANIMATION_SETTLE_MS = 480;
+const VIRTUAL_TIMELINE_OVERSCAN_ROWS = 12;
+const VIRTUAL_TIMELINE_RENDER_STRIDE_ROWS = 10;
+const STRUCTURAL_ANIMATION_SETTLE_MS = 600;
 let processingProgressTimer = null;
 const performanceStats = new Map();
 
@@ -3417,13 +3417,11 @@ function animateTimelineScrollTo(scroll, targetTop) {
   const token = {};
   timelineScrollAnimation = token;
   const start = performance.now();
-  const duration = Math.min(1200, Math.max(500, Math.abs(distance) * 0.6));
+  const duration = Math.min(1800, Math.max(650, Math.abs(distance) * 0.8));
   const frame = now => {
     if (timelineScrollAnimation !== token) return;
     const progress = Math.min(1, (now - start) / duration);
-    const eased = progress < 0.5
-      ? 2 * progress * progress
-      : 1 - Math.pow(-2 * progress + 2, 2) / 2;
+    const eased = -(Math.cos(Math.PI * progress) - 1) / 2;
     scroll.scrollTop = startTop + distance * eased;
     if (progress < 1) requestAnimationFrame(frame);
     else timelineScrollAnimation = null;
@@ -3592,12 +3590,30 @@ function renderVirtualTimeline() {
   virtualTimelineKey = key;
   list.classList.add('virtualized');
   list.style.height = `${Math.ceil(displayIds.length / columns) * rowHeight}px`;
-  list.innerHTML = displayIds.slice(start, end).map((id, offset) => {
+  const existingEntries = new Map([...list.querySelectorAll('.timeline-entry')]
+    .map(entry => [entry.querySelector('.photo-card[data-photo-id]')?.dataset.photoId, entry]));
+  const activeIds = new Set();
+  const additions = document.createDocumentFragment();
+  displayIds.slice(start, end).forEach((id, offset) => {
     const index = start + offset;
     const left = (index % columns) * (entryWidth + 4);
     const top = Math.floor(index / columns) * rowHeight;
-    return timelineEntryMarkup(id, timeline.indexOf(id), ` style="left:${left}px;top:${top}px"`);
-  }).join('');
+    const timelineIndex = timeline.indexOf(id);
+    const key = String(id);
+    activeIds.add(key);
+    let entry = existingEntries.get(key);
+    if (!entry) {
+      entry = elementFromMarkup(timelineEntryMarkup(id, timelineIndex));
+      additions.appendChild(entry);
+    }
+    entry.style.left = `${left}px`;
+    entry.style.top = `${top}px`;
+    entry.dataset.timelineIndex = String(timelineIndex);
+  });
+  existingEntries.forEach((entry, id) => {
+    if (!activeIds.has(id)) entry.remove();
+  });
+  list.appendChild(additions);
 }
 
 function scheduleVirtualTimelineRender() {
