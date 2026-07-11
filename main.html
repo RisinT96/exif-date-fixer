@@ -2201,8 +2201,12 @@ function deletePhotos(ids) {
   ids = [...new Set(ids.map(String))].filter(id => photos[id]);
   if (!ids.length) return;
   const start = performance.now();
+  const previousTimeline = [...timeline];
+  const previousPhotos = Object.fromEntries(ids.map(id => [id, photos[id]]));
   pushHistory();
   const deleted = new Set(ids);
+  const leavingTimeline = timeline.filter(id => deleted.has(String(id)));
+  const poolChanged = unplaced.some(id => deleted.has(String(id)));
   timeline = timeline.filter(id => !deleted.has(String(id)));
   unplaced = unplaced.filter(id => !deleted.has(String(id)));
   ids.forEach(id => delete photos[id]);
@@ -2210,7 +2214,23 @@ function deletePhotos(ids) {
   selectionAnchor = null;
   interpolateAll();
   recalculateEstimatedAppBytes();
-  render({ animate: false });
+  removeTimelineEntries(leavingTimeline);
+  if (timeline.length && leavingTimeline.length) {
+    refreshTimelineCards(getTimelineChangeAffectedIds(
+      previousTimeline, timeline, [], leavingTimeline, previousPhotos
+    ));
+  } else if (!timeline.length) {
+    document.getElementById('timelineList').innerHTML = `<div class="empty-state">
+      <h2>Drag photos here</h2>
+      <p>Drag photos from the left panel into this timeline.<br>Set at least two timestamps to enable interpolation.</p>
+    </div>` + mkDropTarget(0);
+  }
+  if (poolChanged) reconcilePoolCards();
+  updateMemoryStatus();
+  updateHistoryButtons();
+  updateStats();
+  document.getElementById('exportBtn').disabled = !timeline.length;
+  scheduleSessionSave();
   recordPerformance('Delete from Editor', start);
   recordPerformanceAfterPaint('Delete to paint', start);
 }
