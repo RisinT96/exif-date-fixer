@@ -281,6 +281,8 @@
   .timeline-toolbar > span { flex: 1; min-width: 0; }
   .timeline-filter { margin-left: auto; display: flex; align-items: center; gap: 5px; font-size: 11px; white-space: nowrap; }
   .timeline-filter select { padding: 4px 6px; border: 1px solid #2e2e3a; border-radius: 5px; background: #1e1e28; color: #c8c4be; font-size: 11px; }
+  .timeline-search { width: 180px; padding: 4px 7px; border: 1px solid #2e2e3a; border-radius: 5px; background: #1e1e28; color: #c8c4be; font: inherit; font-size: 11px; }
+  .timeline-search.invalid { border-color: #c96b6b; }
   .timeline-entry.filtered-out { display: none; }
 
   .timeline-scroll {
@@ -819,6 +821,7 @@
     <div class="timeline-toolbar">
       <span>Drag photos into the timeline; once it contains photos, use the slim separators between images. Use Ctrl/Cmd-click to select multiple photos, or Shift-click for a range. Timestamps are <strong>interpolated automatically</strong> and your session is <strong>saved automatically</strong> in this browser.</span>
       <button class="btn btn-ghost" type="button" onclick="reinterpolateAllPhotos()" title="Recalculate timestamps for all non-anchor photos">Re-interpolate</button>
+      <input id="timelineSearch" class="timeline-search" type="search" placeholder="Search photos (regex)" aria-label="Search photos by filename using a regular expression" oninput="setTimelineSearch(this.value)">
       <label class="timeline-filter">Show <select id="timelineFilter" onchange="setTimelineFilter(this.value)">
         <option value="all">All</option><option value="interp">Interpolated</option><option value="metadata">Metadata anchors</option><option value="manual">Manual anchors</option>
       </select></label>
@@ -936,6 +939,8 @@ let incrementalImportEnabled = true;
 let sidebarWidth = 260;
 let zoomLevel = 100;
 let timelineFilter = 'all';
+let timelineSearch = '';
+let timelineSearchRegex = null;
 let viewerObjectURL = null;
 let viewerPhotoId = null;
 let pointerDrag = null;
@@ -2062,10 +2067,7 @@ function fmtTime(d) {
 }
 
 function sourceIds(source) {
-  if (source !== 'timeline') return unplaced;
-  return timelineFilter === 'all'
-    ? timeline
-    : timeline.filter(id => timelineFilterKind(photos[id]) === timelineFilter);
+  return source === 'timeline' ? timelineDisplayIds() : poolDisplayIds();
 }
 
 // ── SELECTION, DRAGGING, AND INCREMENTAL DOM UPDATES ───────────────────────
@@ -2348,18 +2350,68 @@ function timelineFilterKind(photo) {
   return photo.timestampSource === 'manual' ? 'manual' : 'metadata';
 }
 
+function matchesPhotoSearch(id) {
+  return !timelineSearch ? true : !!timelineSearchRegex && timelineSearchRegex.test(photos[id]?.name || '');
+}
+
+function timelineDisplayIdsFor(ids) {
+  return ids.filter(id => (timelineFilter === 'all' || timelineFilterKind(photos[id]) === timelineFilter)
+    && matchesPhotoSearch(id));
+}
+
+function poolDisplayIds() {
+  return unplaced.filter(matchesPhotoSearch);
+}
+
+function pruneHiddenSelection() {
+  const visibleTimeline = new Set(timelineDisplayIds());
+  const visiblePool = new Set(poolDisplayIds());
+  for (const id of selectedIds) {
+    const visible = timeline.includes(id) ? visibleTimeline.has(id) : visiblePool.has(id);
+    if (!visible) selectedIds.delete(id);
+  }
+  if (selectionAnchor) {
+    const visible = selectionAnchor.source === 'timeline'
+      ? visibleTimeline.has(selectionAnchor.id) : visiblePool.has(selectionAnchor.id);
+    if (!visible) selectionAnchor = null;
+  }
+  updateSelectionUI();
+}
+
+function updateTimelineSearchStatus() {
+  const input = document.getElementById('timelineSearch');
+  if (!input) return;
+  input.value = timelineSearch;
+  input.classList.toggle('invalid', !!timelineSearch && !timelineSearchRegex);
+  input.title = timelineSearch && !timelineSearchRegex ? 'Invalid regular expression' : 'Search photos by filename using a regular expression';
+}
+
+function setTimelineSearch(value) {
+  timelineSearch = String(value || '');
+  try {
+    timelineSearchRegex = timelineSearch ? new RegExp(timelineSearch, 'i') : null;
+  } catch {
+    timelineSearchRegex = null;
+  }
+  updateTimelineSearchStatus();
+  pruneHiddenSelection();
+  render({ renderPool: true, animate: false });
+}
+
 function applyTimelineFilter() {
   const select = document.getElementById('timelineFilter');
   if (select) select.value = timelineFilter;
+  const visible = new Set(timelineDisplayIds());
   document.querySelectorAll('#timelineList .timeline-entry').forEach(entry => {
     const id = entry.querySelector('.photo-card[data-photo-id]')?.dataset.photoId;
-    entry.classList.toggle('filtered-out', !!id && timelineFilter !== 'all' && timelineFilterKind(photos[id]) !== timelineFilter);
+    entry.classList.toggle('filtered-out', !!id && !visible.has(id));
   });
   updateTimelineLineEnds();
 }
 
 function setTimelineFilter(value) {
   timelineFilter = ['all', 'interp', 'metadata', 'manual'].includes(value) ? value : 'all';
+  pruneHiddenSelection();
   if (timeline.length > VIRTUAL_TIMELINE_THRESHOLD) {
     render({ renderPool: false, animate: false });
     return;
@@ -2386,7 +2438,7 @@ function poolFolderLabel(photo) {
 
 function poolGroupedMarkup() {
   const groups = new Map();
-  unplaced.forEach(id => {
+  poolDisplayIds().forEach(id => {
     const label = poolFolderLabel(photos[id]);
     const ids = groups.get(label) || [];
     ids.push(id);
@@ -2437,6 +2489,8 @@ function updatePoolEmptyState() {
   const empty = grid.querySelector('.pool-empty');
   if (!unplaced.length && !empty) {
     grid.innerHTML = '<div class="pool-empty" style="color:#4a4a58;font-size:12px;padding:6px;grid-column:1/-1">All photos placed ✓</div>';
+  } else if (unplaced.length && !poolDisplayIds().length && !empty) {
+    grid.innerHTML = '<div class="pool-empty" style="color:#4a4a58;font-size:12px;padding:6px;grid-column:1/-1">No photos match this search.</div>';
   } else if (unplaced.length) {
     empty?.remove();
   }
@@ -2452,6 +2506,10 @@ function reconcilePoolCards(animateIds = [], mode = 'enter') {
   if (mode === 'exit') animateCardIdsExit(grid, animateIds);
   if (!unplaced.length) {
     grid.innerHTML = '<div class="pool-empty" style="color:#4a4a58;font-size:12px;padding:6px;grid-column:1/-1">All photos placed ✓</div>';
+    return;
+  }
+  if (!poolDisplayIds().length) {
+    grid.innerHTML = '<div class="pool-empty" style="color:#4a4a58;font-size:12px;padding:6px;grid-column:1/-1">No photos match this search.</div>';
     return;
   }
   grid.innerHTML = poolGroupedMarkup();
@@ -3328,7 +3386,9 @@ function deleteViewerPhoto() {
 
 function navigatePhotoViewer(direction) {
   if (!viewerPhotoId) return;
-  const orderedIds = [...timeline, ...unplaced];
+  const orderedIds = timeline.includes(String(viewerPhotoId))
+    ? timelineDisplayIds()
+    : poolDisplayIds();
   const currentIndex = orderedIds.indexOf(viewerPhotoId);
   if (currentIndex < 0) return;
   const nextId = orderedIds[currentIndex + direction];
@@ -3382,9 +3442,7 @@ function getTimelineCardRects(onlyIds = null) {
 
 function getRemovalFocusId(previousTimeline, ids) {
   const removed = new Set(ids.map(String));
-  const displayIds = timelineFilter === 'all'
-    ? previousTimeline
-    : previousTimeline.filter(id => timelineFilterKind(photos[id]) === timelineFilter);
+  const displayIds = timelineDisplayIdsFor(previousTimeline);
   const positions = ids.map(id => displayIds.indexOf(String(id))).filter(index => index >= 0);
   if (!positions.length) return null;
   const lastIndex = Math.max(...positions);
@@ -3578,8 +3636,7 @@ function shouldVirtualizeTimeline() {
 }
 
 function timelineDisplayIds() {
-  if (timelineFilter === 'all') return timeline;
-  return timeline.filter(id => timelineFilterKind(photos[id]) === timelineFilter);
+  return timelineDisplayIdsFor(timeline);
 }
 
 function invalidateVirtualTimeline() {
@@ -3602,11 +3659,12 @@ function renderVirtualTimeline() {
   const list = document.getElementById('timelineList');
   const filterSelect = document.getElementById('timelineFilter');
   if (filterSelect) filterSelect.value = timelineFilter;
+  updateTimelineSearchStatus();
   if (!displayIds.length) {
-    virtualTimelineKey = `empty:${timelineFilter}`;
+    virtualTimelineKey = `empty:${timelineFilter}:${timelineSearch}`;
     list.classList.add('virtualized');
     list.style.height = '';
-    list.innerHTML = '<div class="empty-state"><p>No photos match this filter.</p></div>';
+    list.innerHTML = '<div class="empty-state"><p>No photos match the current filter.</p></div>';
     recordPerformance('Virtual timeline render', renderStart);
     return;
   }
@@ -3618,23 +3676,21 @@ function renderVirtualTimeline() {
   const lastRow = firstRow + Math.ceil(scroll.clientHeight / rowHeight) + VIRTUAL_TIMELINE_OVERSCAN_ROWS * 2;
   const start = firstRow * columns;
   const end = Math.min(displayIds.length, lastRow * columns);
-  const key = `${start}:${end}:${columns}:${rowHeight}:${displayIds.length}:${timelineFilter}`;
+  const key = `${start}:${end}:${columns}:${rowHeight}:${displayIds.length}:${timelineFilter}:${timelineSearch}`;
   if (key === virtualTimelineKey) return;
   virtualTimelineKey = key;
   list.classList.add('virtualized');
   list.style.height = `${Math.ceil(displayIds.length / columns) * rowHeight}px`;
   const existingEntries = new Map([...list.querySelectorAll('.timeline-entry')]
     .map(entry => [entry.querySelector('.photo-card[data-photo-id]')?.dataset.photoId, entry]));
-  const timelineIndices = timelineFilter === 'all'
-    ? null
-    : new Map(timeline.map((id, index) => [id, index]));
+  const timelineIndices = new Map(timeline.map((id, index) => [id, index]));
   const activeIds = new Set();
   const additions = document.createDocumentFragment();
   displayIds.slice(start, end).forEach((id, offset) => {
     const index = start + offset;
     const left = (index % columns) * (entryWidth + 4);
     const top = Math.floor(index / columns) * rowHeight;
-    const timelineIndex = timelineIndices ? timelineIndices.get(id) : index;
+    const timelineIndex = timelineIndices.get(id) ?? index;
     const key = String(id);
     activeIds.add(key);
     let entry = existingEntries.get(key);
@@ -3697,6 +3753,8 @@ function renderNow(options = {}) {
     const grid = document.getElementById('poolGrid');
     if (!unplaced.length) {
       grid.innerHTML = '<div class="pool-empty" style="color:#4a4a58;font-size:12px;padding:6px;grid-column:1/-1">All photos placed ✓</div>';
+    } else if (!poolDisplayIds().length) {
+      grid.innerHTML = '<div class="pool-empty" style="color:#4a4a58;font-size:12px;padding:6px;grid-column:1/-1">No photos match this search.</div>';
     } else {
       grid.innerHTML = poolGroupedMarkup();
     }
@@ -3803,6 +3861,12 @@ document.querySelector('.timeline-scroll').addEventListener('wheel', cancelTimel
 document.querySelector('.timeline-scroll').addEventListener('pointerdown', cancelTimelineScrollAnimation);
 document.getElementById('sidebarResizer').addEventListener('pointerdown', onSidebarResizePointerDown);
 document.addEventListener('keydown', e => {
+  if (e.key === '/' && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey
+      && !e.target.closest('input, textarea, [contenteditable="true"]')) {
+    e.preventDefault();
+    document.getElementById('timelineSearch')?.focus();
+    return;
+  }
   if (document.getElementById('photoViewer').style.display !== 'none') {
     if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
       e.preventDefault();
