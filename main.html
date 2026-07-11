@@ -287,8 +287,9 @@
     flex: 1;
     overflow-y: auto;
     padding: 16px;
-    scroll-behavior: smooth;
+    scroll-behavior: auto;
     overscroll-behavior: contain;
+    overflow-anchor: none;
   }
 
   .timeline-list {
@@ -2213,7 +2214,7 @@ function removeSelectedFromTimeline() {
   insertPoolCards(ids, 'none');
   playCardFlights(flights, document.getElementById('poolGrid'));
   finalizeIncrementalTransfer(getTransferAffectedIds(previousTimeline, timeline, new Set(ids)));
-  focusTimelinePhotoIfNeeded(focusId, 480, true);
+  focusTimelinePhotoIfNeeded(focusId, true);
 }
 
 function deleteSelectedPhotos() {
@@ -2277,7 +2278,7 @@ function deletePhotos(ids) {
   scheduleSessionSave();
   recordPerformance('Delete from Editor', start);
   recordPerformanceAfterPaint('Delete to paint', start);
-  focusTimelinePhotoIfNeeded(focusId, 0, true);
+  focusTimelinePhotoIfNeeded(focusId, true);
 }
 
 function selectAllInActiveList() {
@@ -3396,7 +3397,7 @@ function getRemovalFocusId(previousTimeline, ids) {
   return null;
 }
 
-function focusTimelinePhotoIfNeeded(id, delay = 0, forceCenter = false) {
+function focusTimelinePhotoIfNeeded(id, forceCenter = false) {
   if (!id || !timeline.includes(String(id))) return;
   const requestedAt = performance.now();
   const focus = () => requestAnimationFrame(() => {
@@ -3414,23 +3415,22 @@ function focusTimelinePhotoIfNeeded(id, delay = 0, forceCenter = false) {
       const index = timelineDisplayIds().indexOf(String(id));
       if (index < 0) return;
       const row = Math.floor(index / columns);
-      animateTimelineScrollTo(scroll, Math.max(0, 16 + row * rowHeight - (scroll.clientHeight - rowHeight) / 2));
+      animateTimelineScrollTo(scroll, Math.max(0, 16 + row * rowHeight - (scroll.clientHeight - rowHeight) / 2), requestedAt);
       return;
     }
     if (card && area && rect) {
-      animateTimelineScrollTo(scroll, scroll.scrollTop + rect.top - area.top - (area.height - rect.height) / 2);
+      animateTimelineScrollTo(scroll, scroll.scrollTop + rect.top - area.top - (area.height - rect.height) / 2, requestedAt);
     }
   });
   if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) focus();
-  else if (delay) setTimeout(focus, delay);
-  else focus();
+  else afterStructuralAnimations(focus);
 }
 
 function cancelTimelineScrollAnimation() {
   timelineScrollAnimation = null;
 }
 
-function animateTimelineScrollTo(scroll, targetTop) {
+function animateTimelineScrollTo(scroll, targetTop, requestedAt = performance.now()) {
   if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
     scroll.scrollTop = targetTop;
     return;
@@ -3442,11 +3442,16 @@ function animateTimelineScrollTo(scroll, targetTop) {
   timelineScrollAnimation = token;
   const start = performance.now();
   const duration = Math.min(1800, Math.max(650, Math.abs(distance) * 0.8));
+  let firstMovement = true;
   const frame = now => {
     if (timelineScrollAnimation !== token) return;
     const progress = Math.min(1, (now - start) / duration);
-    const eased = progress - Math.sin(2 * Math.PI * progress) / (4 * Math.PI);
+    const eased = -(Math.cos(Math.PI * progress) - 1) / 2;
     scroll.scrollTop = startTop + distance * eased;
+    if (firstMovement && Math.abs(scroll.scrollTop - startTop) >= 1) {
+      firstMovement = false;
+      recordPerformance('Focus scroll first movement', requestedAt);
+    }
     if (progress < 1) requestAnimationFrame(frame);
     else timelineScrollAnimation = null;
   };
@@ -3595,6 +3600,8 @@ function renderVirtualTimeline() {
   const { scroll, columns, entryWidth, rowHeight } = virtualTimelineLayout();
   const displayIds = timelineDisplayIds();
   const list = document.getElementById('timelineList');
+  const filterSelect = document.getElementById('timelineFilter');
+  if (filterSelect) filterSelect.value = timelineFilter;
   if (!displayIds.length) {
     virtualTimelineKey = `empty:${timelineFilter}`;
     list.classList.add('virtualized');
