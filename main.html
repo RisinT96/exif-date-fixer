@@ -734,9 +734,23 @@
   }
   .viewer-close:hover { background: #3a3a48; }
   .viewer-fallback { color: #8a8690; font-size: 14px; text-align: center; }
+  .session-restore {
+    position: fixed; inset: 0; z-index: 300;
+    display: flex; align-items: center; justify-content: center;
+    background: #1a1a1f;
+  }
+  .session-restore-card { width: 280px; text-align: center; color: #c8c4be; font-size: 13px; }
+  .session-restore-track { height: 5px; margin-top: 12px; overflow: hidden; border-radius: 999px; background: #2e2e3a; }
+  .session-restore-bar { width: 42%; height: 100%; border-radius: inherit; background: #5b6af0; animation: restore-progress 1s ease-in-out infinite; }
+  .session-restore-bar.determinate { width: 0; animation: none; }
+  @keyframes restore-progress { from { transform: translateX(-120%); } to { transform: translateX(330%); } }
 </style>
 </head>
 <body>
+
+<div class="session-restore" id="sessionRestoreOverlay" role="status" aria-live="polite">
+  <div class="session-restore-card"><span id="sessionRestoreLabel">Loading saved session…</span><div class="session-restore-track"><div class="session-restore-bar" id="sessionRestoreBar"></div></div></div>
+</div>
 
 <header>
   <h1>📷 Photo Timestamp Editor</h1>
@@ -1382,7 +1396,16 @@ function buildSessionState() {
   };
 }
 
-function restoreSessionState(state) {
+function setSessionRestoreProgress(processed, total, label = 'Restoring photos') {
+  const text = document.getElementById('sessionRestoreLabel');
+  const bar = document.getElementById('sessionRestoreBar');
+  if (!text || !bar) return;
+  text.textContent = total ? `${label}: ${processed.toLocaleString()} / ${total.toLocaleString()}` : label;
+  bar.classList.add('determinate');
+  bar.style.width = total ? `${Math.round(processed / total * 100)}%` : '42%';
+}
+
+async function restoreSessionState(state, onProgress = null) {
   photos = {};
   estimatedAppBytes = 0;
   nextId = Number(state.nextId) || 0;
@@ -1398,7 +1421,9 @@ function restoreSessionState(state) {
   timeline = Array.isArray(state.timeline) ? state.timeline.map(String) : [];
   unplaced = Array.isArray(state.unplaced) ? state.unplaced.map(String) : [];
 
-  for (const [id, p] of Object.entries(state.photos || {})) {
+  const entries = Object.entries(state.photos || {});
+  for (let index = 0; index < entries.length; index++) {
+    const [id, p] = entries[index];
     photos[id] = {
       id: String(p.id ?? id),
       name: p.name || `photo-${id}`,
@@ -1416,6 +1441,15 @@ function restoreSessionState(state) {
       _interpolated: null
     };
     estimatedAppBytes += estimatePhotoBytes(photos[id]);
+    if (onProgress && ((index + 1) % 75 === 0 || index + 1 === entries.length)) {
+      onProgress(index + 1, entries.length);
+      await new Promise(resolve => requestAnimationFrame(resolve));
+    }
+  }
+
+  if (onProgress) {
+    onProgress(entries.length, entries.length, 'Finalizing session');
+    await new Promise(resolve => requestAnimationFrame(resolve));
   }
 
   timeline = timeline.filter(id => photos[id]);
@@ -1468,7 +1502,8 @@ async function loadSession() {
   try {
     const state = await withSessionStore('readonly', store => store.get(SESSION_KEY));
     if (state && state.photos) {
-      restoreSessionState(state);
+      setSessionRestoreProgress(0, Object.keys(state.photos).length);
+      await restoreSessionState(state, setSessionRestoreProgress);
       setSessionStatus('Session restored', 'good');
       return true;
     }
@@ -2967,7 +3002,7 @@ async function importSessionFile(file) {
       throw new Error('This session does not contain any photos.');
     }
     pushHistory();
-    restoreSessionState(state);
+    await restoreSessionState(state);
     render();
     await saveSessionNow();
     setSessionStatus(`Session imported · ${importedPhotoCount} photos`, 'good');
@@ -3201,9 +3236,13 @@ document.getElementById('sessionFileInput').addEventListener('change', async fun
 });
 
 async function initApp() {
+  await new Promise(resolve => requestAnimationFrame(resolve));
   await loadSession();
   sessionReady = true;
+  setSessionRestoreProgress(1, 1, 'Rendering timeline');
+  await new Promise(resolve => requestAnimationFrame(resolve));
   render();
+  document.getElementById('sessionRestoreOverlay').style.display = 'none';
 }
 
 initApp();
