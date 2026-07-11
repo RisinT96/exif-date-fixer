@@ -1013,6 +1013,7 @@ let suppressCardClick = false;
 let virtualTimelineKey = null;
 let virtualTimelineFrame = null;
 let timelineScrollAnimation = null;
+let pendingSessionScroll = null;
 
 const CAM1 = 'DSC';
 const CAM2 = '976A';
@@ -1053,6 +1054,7 @@ const historyPhotoRegistry = new Map();
 const MAX_HISTORY = 100;
 const MIN_IMPORT_CONCURRENCY = 1;
 const IMPORT_UI_FLUSH_INTERVAL_MS = 350;
+const SESSION_SAVE_DEBOUNCE_MS = 2000;
 const IMPORT_PROGRESS_UPDATE_INTERVAL_MS = 150;
 const SESSION_RESTORE_YIELD_INTERVAL = 500;
 const VIRTUAL_TIMELINE_THRESHOLD = 200;
@@ -1479,6 +1481,7 @@ function pushHistory() {
 function updateSelectionUI() {
   document.querySelectorAll('#timelineList .photo-card[data-photo-id], #poolGrid .pool-card[data-photo-id]')
     .forEach(card => card.classList.toggle('selected', selectedIds.has(card.dataset.photoId)));
+  scheduleSessionSave();
 }
 
 function detectCamera(name) {
@@ -1566,6 +1569,14 @@ function buildSessionState() {
     sidebarWidth,
     zoomLevel,
     timelineFilter,
+    timelineSearch,
+    selectedIds: [...selectedIds],
+    selectionAnchor,
+    collapsedPoolFolders: [...collapsedPoolFolders],
+    scroll: {
+      timeline: document.querySelector('.timeline-scroll')?.scrollTop || 0,
+      pool: document.querySelector('.unplaced-pool')?.scrollTop || 0
+    },
     timeline: [...timeline],
     unplaced: [...unplaced],
     photos: cleanPhotos
@@ -1595,6 +1606,12 @@ async function restoreSessionState(state, onProgress = null) {
   zoomLevel = normalizeZoom(state.zoomLevel);
   setZoom(zoomLevel);
   timelineFilter = ['all', 'interp', 'metadata', 'manual'].includes(state.timelineFilter) ? state.timelineFilter : 'all';
+  timelineSearch = String(state.timelineSearch || '');
+  try {
+    timelineSearchRegex = timelineSearch ? new RegExp(timelineSearch, 'i') : null;
+  } catch {
+    timelineSearchRegex = null;
+  }
   timeline = Array.isArray(state.timeline) ? state.timeline.map(String) : [];
   unplaced = Array.isArray(state.unplaced) ? state.unplaced.map(String) : [];
 
@@ -1653,14 +1670,39 @@ async function restoreSessionState(state, onProgress = null) {
   nextId = Math.max(nextId, maxId + 1);
   sortUnplacedByName();
   interpolateAll();
+  selectedIds = new Set((Array.isArray(state.selectedIds) ? state.selectedIds : [])
+    .map(String).filter(id => photos[id] && (timeline.includes(id) || unplaced.includes(id))));
+  selectionAnchor = state.selectionAnchor && photos[String(state.selectionAnchor.id)]
+    ? { source: state.selectionAnchor.source === 'pool' ? 'pool' : 'timeline', id: String(state.selectionAnchor.id) }
+    : null;
+  collapsedPoolFolders.clear();
+  (Array.isArray(state.collapsedPoolFolders) ? state.collapsedPoolFolders : [])
+    .forEach(label => collapsedPoolFolders.add(String(label)));
+  pendingSessionScroll = {
+    timeline: Number(state.scroll?.timeline) || 0,
+    pool: Number(state.scroll?.pool) || 0
+  };
   recordPerformance('Restore data', start);
+}
+
+function applyPendingSessionScroll() {
+  if (!pendingSessionScroll) return;
+  const timelineScroll = document.querySelector('.timeline-scroll');
+  const poolScroll = document.querySelector('.unplaced-pool');
+  if (timelineScroll) timelineScroll.scrollTop = pendingSessionScroll.timeline;
+  if (poolScroll) poolScroll.scrollTop = pendingSessionScroll.pool;
+  pendingSessionScroll = null;
+  updateSelectionUI();
+  updateTimelineSearchStatus();
+  invalidateVirtualTimeline();
+  scheduleVirtualTimelineRender();
 }
 
 function scheduleSessionSave() {
   if (!sessionReady) return;
   clearTimeout(saveTimer);
   setSessionStatus('Saving…');
-  saveTimer = setTimeout(saveSessionNow, 350);
+  saveTimer = setTimeout(saveSessionNow, SESSION_SAVE_DEBOUNCE_MS);
 }
 
 async function saveSessionNow() {
@@ -2445,6 +2487,7 @@ function setTimelineSearch(value) {
   }
   updateTimelineSearchStatus();
   pruneHiddenSelection();
+  scheduleSessionSave();
   render({ renderPool: true, animate: false });
 }
 
@@ -2504,6 +2547,7 @@ function poolGroupedMarkup() {
 function togglePoolFolder(label) {
   if (collapsedPoolFolders.has(label)) collapsedPoolFolders.delete(label);
   else collapsedPoolFolders.add(label);
+  scheduleSessionSave();
   const section = [...document.querySelectorAll('#poolGrid .pool-folder')]
     .find(element => element.dataset.folder === label);
   if (!section) return;
@@ -2518,6 +2562,7 @@ function togglePoolFolder(label) {
 
 function collapseAllPoolFolders() {
   poolDisplayIds().forEach(id => collapsedPoolFolders.add(poolFolderLabel(photos[id])));
+  scheduleSessionSave();
   document.querySelectorAll('#poolGrid .pool-folder').forEach(section => {
     section.classList.add('collapsed');
     const button = section.querySelector('.pool-folder-title button');
@@ -2527,6 +2572,7 @@ function collapseAllPoolFolders() {
 
 function expandAllPoolFolders() {
   collapsedPoolFolders.clear();
+  scheduleSessionSave();
   document.querySelectorAll('#poolGrid .pool-folder').forEach(section => {
     section.classList.remove('collapsed');
     const button = section.querySelector('.pool-folder-title button');
@@ -3536,6 +3582,7 @@ async function importSessionFile(file) {
     pushHistory();
     await restoreSessionState(state);
     render();
+    applyPendingSessionScroll();
     await saveSessionNow();
     setSessionStatus(`Session imported · ${importedPhotoCount} photos`, 'good');
   } catch (err) {
@@ -3985,6 +4032,8 @@ document.getElementById('poolGrid').addEventListener('pointerdown', onCardContai
 document.getElementById('timelineList').addEventListener('pointerdown', onCardContainerPointerDown);
 document.getElementById('timelineList').addEventListener('contextmenu', onTimelineContextMenu);
 document.querySelector('.timeline-scroll').addEventListener('scroll', scheduleVirtualTimelineRender, { passive: true });
+document.querySelector('.timeline-scroll').addEventListener('scroll', scheduleSessionSave, { passive: true });
+document.querySelector('.unplaced-pool').addEventListener('scroll', scheduleSessionSave, { passive: true });
 document.querySelector('.timeline-scroll').addEventListener('wheel', cancelTimelineScrollAnimation, { passive: true });
 document.querySelector('.timeline-scroll').addEventListener('pointerdown', cancelTimelineScrollAnimation);
 document.getElementById('sidebarResizer').addEventListener('pointerdown', onSidebarResizePointerDown);
@@ -4077,6 +4126,7 @@ async function initApp() {
   setSessionRestoreProgress(1, 1, 'Rendering timeline');
   await new Promise(resolve => requestAnimationFrame(resolve));
   render();
+  applyPendingSessionScroll();
   document.getElementById('sessionRestoreOverlay').style.display = 'none';
 }
 
