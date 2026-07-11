@@ -1003,6 +1003,8 @@ let timelineFilter = 'all';
 let timelineSearch = '';
 let timelineSearchRegex = null;
 let viewerObjectURL = null;
+let viewerFullImage = null;
+let viewerLoadToken = 0;
 let viewerPhotoId = null;
 let pointerDrag = null;
 let suppressCardClick = false;
@@ -3383,6 +3385,7 @@ function openPhotoViewer(event, id) {
   updateSelectionUI();
 
   closePhotoViewer();
+  const loadToken = viewerLoadToken;
   viewerPhotoId = photoId;
   document.getElementById('viewerRemoveFromTimeline').disabled = !photo.inTimeline;
   const overlay = document.getElementById('photoViewer');
@@ -3393,7 +3396,22 @@ function openPhotoViewer(event, id) {
   image.style.display = 'none';
   fallback.style.display = 'none';
 
-  if (photo.sourceFile) {
+  if (photo.sourceFile && photo.thumbURL) {
+    image.onload = () => { image.style.display = 'block'; };
+    image.onerror = () => showViewerFallback(photo);
+    image.src = photo.thumbURL;
+    setTimeout(() => {
+      if (viewerPhotoId !== photoId || viewerLoadToken !== loadToken) return;
+      viewerObjectURL = URL.createObjectURL(photo.sourceFile);
+      viewerFullImage = new Image();
+      viewerFullImage.onload = () => {
+        if (viewerPhotoId !== photoId || viewerLoadToken !== loadToken) return;
+        image.onload = () => { image.style.display = 'block'; };
+        image.src = viewerObjectURL;
+      };
+      viewerFullImage.src = viewerObjectURL;
+    }, 80);
+  } else if (photo.sourceFile) {
     viewerObjectURL = URL.createObjectURL(photo.sourceFile);
     image.onload = () => { image.style.display = 'block'; };
     image.onerror = () => showViewerFallback(photo);
@@ -3435,6 +3453,12 @@ function showViewerFallback(photo) {
 function closePhotoViewer() {
   const overlay = document.getElementById('photoViewer');
   const image = document.getElementById('viewerImage');
+  viewerLoadToken++;
+  if (viewerFullImage) {
+    viewerFullImage.onload = null;
+    viewerFullImage.src = '';
+    viewerFullImage = null;
+  }
   if (viewerObjectURL) {
     URL.revokeObjectURL(viewerObjectURL);
     viewerObjectURL = null;
