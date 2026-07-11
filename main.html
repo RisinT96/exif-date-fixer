@@ -684,6 +684,9 @@
   }
   .modal input:focus { border-color: #5b6af0; }
   .modal-actions { display: flex; gap: 8px; justify-content: flex-end; }
+  .help-modal { width: min(460px, calc(100vw - 32px)); }
+  .shortcut-list { display: grid; grid-template-columns: auto 1fr; gap: 9px 18px; color: var(--color-muted); font-size: 13px; }
+  .shortcut-list kbd { min-width: 74px; padding: 3px 6px; border: 1px solid #454554; border-radius: 4px; background: #252530; color: var(--color-text-strong); font: inherit; font-size: 12px; text-align: center; }
   .settings-check {
     display: flex;
     align-items: center;
@@ -851,8 +854,9 @@
 
   <div class="timeline-area">
     <div class="timeline-toolbar">
-      <span>Drag photos into the timeline; once it contains photos, use the slim separators between images. Use Ctrl/Cmd-click to select multiple photos, or Shift-click for a range. Timestamps are <strong>interpolated automatically</strong> and your session is <strong>saved automatically</strong> in this browser.</span>
+      <span>Drag photos into the timeline · <strong>?</strong> for keyboard shortcuts</span>
       <button class="btn btn-ghost" type="button" onclick="reinterpolateAllPhotos()" title="Recalculate timestamps for all non-anchor photos">Re-interpolate</button>
+      <button class="btn btn-ghost" type="button" onclick="openHelp()" title="Show keyboard shortcuts">Help</button>
       <input id="timelineSearch" class="timeline-search" type="search" placeholder="Search photos (regex)" aria-label="Search photos by filename using a regular expression" oninput="setTimelineSearch(this.value)">
       <label class="timeline-filter">Show <select id="timelineFilter" onchange="setTimelineFilter(this.value)">
         <option value="all">All</option><option value="interp">Interpolated</option><option value="metadata">Metadata anchors</option><option value="manual">Manual anchors</option>
@@ -934,6 +938,26 @@
       <button class="btn btn-ghost" onclick="closeCsvTimezoneModal()">Cancel</button>
       <button class="btn btn-primary" onclick="downloadCSV()">Export</button>
     </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="helpModal" style="display:none" onclick="if(event.target === this) closeHelp()">
+  <div class="modal help-modal" role="dialog" aria-modal="true" aria-labelledby="helpTitle">
+    <h2 id="helpTitle">Keyboard Shortcuts</h2>
+    <div class="shortcut-list">
+      <kbd>/</kbd><span>Focus photo search</span>
+      <kbd>?</kbd><span>Open this help</span>
+      <kbd>Ctrl/Cmd + A</kbd><span>Select all visible photos</span>
+      <kbd>Shift-click</kbd><span>Select a range of visible photos</span>
+      <kbd>Ctrl/Cmd-click</kbd><span>Toggle a photo in the selection</span>
+      <kbd>← / →</kbd><span>Move selected timeline photos</span>
+      <kbd>Delete</kbd><span>Remove selected photos from the timeline</span>
+      <kbd>Ctrl/Cmd + Z</kbd><span>Undo</span>
+      <kbd>Ctrl/Cmd + Shift + Z</kbd><span>Redo</span>
+      <kbd>Esc</kbd><span>Close overlays and clear selection</span>
+      <kbd>Viewer: ← / →</kbd><span>Browse matching photos</span>
+    </div>
+    <div class="modal-actions"><button class="btn btn-primary" type="button" onclick="closeHelp()">Done</button></div>
   </div>
 </div>
 
@@ -3235,6 +3259,14 @@ function closeCsvTimezoneModal() {
   document.getElementById('csvTimezoneModal').style.display = 'none';
 }
 
+function openHelp() {
+  document.getElementById('helpModal').style.display = 'flex';
+}
+
+function closeHelp() {
+  document.getElementById('helpModal').style.display = 'none';
+}
+
 function timezoneParts(date, timeZone) {
   return Object.fromEntries(new Intl.DateTimeFormat('en-US', {
     timeZone, year: 'numeric', month: '2-digit', day: '2-digit',
@@ -3916,6 +3948,12 @@ document.querySelector('.timeline-scroll').addEventListener('wheel', cancelTimel
 document.querySelector('.timeline-scroll').addEventListener('pointerdown', cancelTimelineScrollAnimation);
 document.getElementById('sidebarResizer').addEventListener('pointerdown', onSidebarResizePointerDown);
 document.addEventListener('keydown', e => {
+  if (e.key === '?' && !e.ctrlKey && !e.metaKey && !e.altKey
+      && !e.target.closest('input, textarea, [contenteditable="true"]')) {
+    e.preventDefault();
+    openHelp();
+    return;
+  }
   if (e.key === '/' && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey
       && !e.target.closest('input, textarea, [contenteditable="true"]')) {
     e.preventDefault();
@@ -3932,6 +3970,10 @@ document.addEventListener('keydown', e => {
   if (e.key === 'Escape') {
     if (document.getElementById('photoViewer').style.display !== 'none') {
       closePhotoViewer();
+      return;
+    }
+    if (document.getElementById('helpModal').style.display !== 'none') {
+      closeHelp();
       return;
     }
     hideCardContextMenu();
