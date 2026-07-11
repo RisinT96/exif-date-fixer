@@ -241,6 +241,21 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 6px;
   }
+  .pool-folder { grid-column: 1 / -1; }
+  .pool-folder-title {
+    margin: 10px 0 6px;
+    padding: 5px 6px;
+    border-top: 1px solid #2e2e3a;
+    color: #8a90f0;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .pool-folder:first-child .pool-folder-title { margin-top: 0; }
+  .pool-folder-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
 
   /* ── TIMELINE ── */
   .timeline-area {
@@ -748,7 +763,9 @@
         <div>📁 Click or drop photos here</div>
         <div style="font-size:11px;margin-top:4px;">JPG, PNG, HEIC, etc.</div>
       </div>
+      <button class="btn btn-ghost" type="button" style="width:100%;margin-top:8px" onclick="document.getElementById('folderInput').click()">Select Folder</button>
       <input type="file" id="fileInput" multiple accept="image/*" style="display:none">
+      <input type="file" id="folderInput" webkitdirectory directory multiple style="display:none">
       <input type="file" id="sessionFileInput" accept="application/json,.json" style="display:none">
       <div class="processing-status" id="processingStatus" aria-live="polite">
         <div id="processingLabel">Processing images…</div>
@@ -1141,6 +1158,7 @@ function captureEditorState() {
       historyPhotoRegistry.set(id, {
         id: photo.id,
         name: photo.name,
+        sourcePath: photo.sourcePath || photo.name,
         camera: photo.camera,
         modifiedTime: photo.modifiedTime || 0,
         sourceSize: photo.sourceSize ?? null,
@@ -1327,6 +1345,7 @@ function buildSessionState() {
     cleanPhotos[id] = {
       id: p.id,
       name: p.name,
+      sourcePath: p.sourcePath || p.name,
       camera: p.camera,
       timestamp: dateToLocalStamp(p.timestamp),
       timestampSource: p.timestampSource || null,
@@ -1373,6 +1392,7 @@ function restoreSessionState(state) {
     photos[id] = {
       id: String(p.id ?? id),
       name: p.name || `photo-${id}`,
+      sourcePath: p.sourcePath || p.name || `photo-${id}`,
       camera: p.camera || detectCamera(p.name || ''),
       timestamp: localStampToDate(p.timestamp),
       timestampSource: p.timestampSource || (p.timestamp ? 'exif' : null),
@@ -1641,7 +1661,14 @@ function handleFiles(files) {
 // Files are processed serially. Persistent thumbnails are small; source files
 // stay lazy and are read only when opened in the full-screen viewer.
 async function processFiles(files) {
-  const existingPhotosByName = new Map(Object.values(photos).map(photo => [photo.name, photo]));
+  const existingPhotosByPath = new Map();
+  const existingPhotosByName = new Map();
+  Object.values(photos).forEach(photo => {
+    existingPhotosByPath.set(photo.sourcePath || photo.name, photo);
+    const matches = existingPhotosByName.get(photo.name) || [];
+    matches.push(photo);
+    existingPhotosByName.set(photo.name, matches);
+  });
   let renderedTimeline = [...timeline];
   let pendingTimelineIds = [];
   let pendingUnplacedIds = [];
@@ -1690,24 +1717,28 @@ async function processFiles(files) {
   pushHistory();
 
   let nextFileIndex = 0;
-  const filenameWork = new Map();
+  const sourcePathWork = new Map();
   const workerCount = Math.min(importConcurrencyMultiplier, countSupportedPhotoFiles(files));
   const importWorkers = await createImportWorkers(workerCount);
 
   const processOneFile = async (worker, file) => {
-    const existingPhoto = existingPhotosByName.get(file.name);
-    const result = await worker.run(file, !existingPhoto);
-    const sourceIdentity = { sourceSize: result.sourceSize, sourceFingerprint: result.sourceFingerprint };
+    const sourcePath = file.webkitRelativePath || file.name;
+    const exactPathPhoto = existingPhotosByPath.get(sourcePath);
+    let result = await worker.run(file, !exactPathPhoto);
+    let sourceIdentity = { sourceSize: result.sourceSize, sourceFingerprint: result.sourceFingerprint };
+    const candidates = exactPathPhoto ? [exactPathPhoto] : (existingPhotosByName.get(file.name) || []);
+    const existingPhoto = candidates.find(photo => sourceMatchesPhoto(photo, file, sourceIdentity));
     if (existingPhoto) {
-      const path = file.webkitRelativePath || file.name;
-      if (sourceMatchesPhoto(existingPhoto, file, sourceIdentity)) {
-        existingPhoto.sourceFile = file;
-        existingPhoto.sourceSize = sourceIdentity.sourceSize;
-        existingPhoto.sourceFingerprint ||= sourceIdentity.sourceFingerprint;
-        return;
-      }
-      processingState.errors.push(`File mismatch for existing photo: ${path}`);
+      existingPhoto.sourceFile = file;
+      existingPhoto.sourcePath = sourcePath;
+      existingPhoto.sourceSize = sourceIdentity.sourceSize;
+      existingPhoto.sourceFingerprint ||= sourceIdentity.sourceFingerprint;
+      existingPhotosByPath.set(sourcePath, existingPhoto);
       return;
+    }
+    if (!result.thumbURL) {
+      result = await worker.run(file, true);
+      sourceIdentity = { sourceSize: result.sourceSize, sourceFingerprint: result.sourceFingerprint };
     }
     const id = String(nextId++);
     const timestamp = result.timestamp ? new Date(result.timestamp) : null;
@@ -1716,7 +1747,7 @@ async function processFiles(files) {
     const camera = detectCamera(file.name);
     // Keep only a lazy reference to the source. The file bytes are not read
     // into app state; they are loaded only if the user opens this photo.
-    photos[id] = { id, name: file.name, camera, timestamp, timestampSource, modifiedTime: file.lastModified || 0, sourceSize: sourceIdentity.sourceSize, sourceFingerprint: sourceIdentity.sourceFingerprint, thumbURL, sourceFile: file, inTimeline: false, _interpolated: null };
+    photos[id] = { id, name: file.name, sourcePath, camera, timestamp, timestampSource, modifiedTime: file.lastModified || 0, sourceSize: sourceIdentity.sourceSize, sourceFingerprint: sourceIdentity.sourceFingerprint, thumbURL, sourceFile: file, inTimeline: false, _interpolated: null };
     estimatedAppBytes += estimatePhotoBytes(photos[id]);
     if (timestamp) {
       photos[id].inTimeline = true;
@@ -1726,7 +1757,10 @@ async function processFiles(files) {
       unplaced.push(id);
       pendingUnplacedIds.push(id);
     }
-    existingPhotosByName.set(file.name, photos[id]);
+    existingPhotosByPath.set(sourcePath, photos[id]);
+    const matches = existingPhotosByName.get(file.name) || [];
+    matches.push(photos[id]);
+    existingPhotosByName.set(file.name, matches);
     // When incremental import is disabled, retain only the small ID buffers
     // and let the final flush place every completed photo in one DOM pass.
     scheduleImportedCardsFlush();
@@ -1740,9 +1774,10 @@ async function processFiles(files) {
     while (nextFileIndex < files.length) {
       const file = files[nextFileIndex++];
       if (!isSupportedPhotoFile(file)) continue;
-      const previousWork = filenameWork.get(file.name) || Promise.resolve();
+      const sourcePath = file.webkitRelativePath || file.name;
+      const previousWork = sourcePathWork.get(sourcePath) || Promise.resolve();
       const work = previousWork.then(() => processOneFile(worker, file));
-      filenameWork.set(file.name, work.catch(() => {}));
+      sourcePathWork.set(sourcePath, work.catch(() => {}));
       try {
         await work;
       } catch (error) {
@@ -2088,6 +2123,25 @@ function poolCardMarkup(id) {
   </div>`;
 }
 
+function poolFolderLabel(photo) {
+  const path = photo.sourcePath || photo.name;
+  const slash = path.lastIndexOf('/');
+  return slash >= 0 ? path.slice(0, slash) : 'Selected files';
+}
+
+function poolGroupedMarkup() {
+  const groups = new Map();
+  unplaced.forEach(id => {
+    const label = poolFolderLabel(photos[id]);
+    const ids = groups.get(label) || [];
+    ids.push(id);
+    groups.set(label, ids);
+  });
+  return [...groups.entries()].sort(([a], [b]) => filenameCollator.compare(a, b)).map(([label, ids]) =>
+    `<section class="pool-folder"><div class="pool-folder-title" title="${escapeHtml(label)}">${escapeHtml(label)}</div><div class="pool-folder-grid">${ids.map(poolCardMarkup).join('')}</div></section>`
+  ).join('');
+}
+
 function timelineEntryMarkup(id) {
   const photo = photos[id];
   const displayTime = getDisplayTime(photo);
@@ -2144,43 +2198,15 @@ function reconcilePoolCards() {
     grid.innerHTML = '<div class="pool-empty" style="color:#4a4a58;font-size:12px;padding:6px;grid-column:1/-1">All photos placed ✓</div>';
     return;
   }
-  const existingCards = poolCardsById();
-  const fragment = document.createDocumentFragment();
-  unplaced.forEach(id => {
-    fragment.appendChild(existingCards.get(String(id)) || elementFromMarkup(poolCardMarkup(id)));
-  });
-  grid.replaceChildren(fragment);
+  grid.innerHTML = poolGroupedMarkup();
 }
 
 function removePoolCards(ids) {
-  if (ids.length > 24) {
-    reconcilePoolCards();
-    return;
-  }
-  const cards = poolCardsById();
-  ids.forEach(id => cards.get(String(id))?.remove());
-  updatePoolEmptyState();
+  reconcilePoolCards();
 }
 
 function insertPoolCards(ids) {
-  if (ids.length > 24) {
-    reconcilePoolCards();
-    return;
-  }
-  const inserted = new Set(ids.map(String));
-  const grid = document.getElementById('poolGrid');
-  updatePoolEmptyState();
-  const cards = poolCardsById();
-  let nextCard = null;
-  for (let index = unplaced.length - 1; index >= 0; index--) {
-    const id = unplaced[index];
-    if (inserted.has(String(id))) {
-      const card = elementFromMarkup(poolCardMarkup(id));
-      grid.insertBefore(card, nextCard);
-      cards.set(String(id), card);
-    }
-    nextCard = cards.get(String(id)) || nextCard;
-  }
+  reconcilePoolCards();
 }
 
 function removeTimelineEntries(ids) {
@@ -2840,7 +2866,7 @@ function openPhotoViewer(event, id) {
   const image = document.getElementById('viewerImage');
   const fallback = document.getElementById('viewerFallback');
   const title = document.getElementById('viewerTitle');
-  title.textContent = photo.name || '';
+  title.textContent = photo.sourcePath || photo.name || '';
   image.alt = photo.name || 'Photo';
   image.style.display = 'none';
   fallback.style.display = 'none';
@@ -2988,15 +3014,7 @@ function render(options = {}) {
     if (!unplaced.length) {
       grid.innerHTML = '<div class="pool-empty" style="color:#4a4a58;font-size:12px;padding:6px;grid-column:1/-1">All photos placed ✓</div>';
     } else {
-      grid.innerHTML = unplaced.map(id => {
-        const p = photos[id];
-        const selected = selectedIds.has(String(id)) ? ' selected' : '';
-        return `<div class="pool-card${selected}" data-photo-id="${id}"
-          title="${p.name.replace(/"/g,'&quot;')}">
-          <div class="pool-thumb">${p.thumbURL ? `<img src="${p.thumbURL}" loading="lazy" decoding="async" alt="">` : '🖼'}<button type="button" class="view-btn" data-action="view" title="Open fullscreen" aria-label="Open ${escapeHtml(p.name)} fullscreen">⛶</button><button type="button" class="pool-delete-btn" data-action="delete" title="Delete permanently" aria-label="Delete ${escapeHtml(p.name)} permanently">🗑</button></div>
-          <div class="pool-name">${p.name}</div>
-        </div>`;
-      }).join('');
+      grid.innerHTML = poolGroupedMarkup();
     }
   }
 
@@ -3138,6 +3156,10 @@ document.getElementById('unplacedSort').addEventListener('change', function() {
 document.getElementById('fileInput').addEventListener('change', async function() {
   await handleFiles(this.files);
   this.value = ''; // release the picker references after processing the batch
+});
+document.getElementById('folderInput').addEventListener('change', async function() {
+  await handleFiles(this.files);
+  this.value = '';
 });
 document.getElementById('sessionFileInput').addEventListener('change', async function() {
   const file = this.files[0];
