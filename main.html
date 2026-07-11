@@ -86,6 +86,25 @@
     flex: 1;
     overflow: hidden;
   }
+  .zoom-bar {
+    height: 34px;
+    flex: 0 0 34px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    background: #13131a;
+    border-top: 1px solid #2e2e3a;
+    color: #8a8690;
+    font-size: 12px;
+  }
+  .zoom-bar button {
+    width: 22px; height: 22px; border: 0; background: transparent;
+    color: #c8c4be; cursor: pointer; font-size: 17px; line-height: 1;
+  }
+  .zoom-bar button:hover { color: #8a90f0; }
+  .zoom-bar input { width: 150px; accent-color: #5b6af0; }
+  .zoom-value { width: 38px; text-align: center; font-variant-numeric: tabular-nums; }
 
   /* ── LEFT PANEL ── */
   .sidebar {
@@ -266,8 +285,8 @@
     display: flex;
     align-items: stretch;
     column-gap: 4px;
-    flex: 0 0 176px; /* separator (12) + gap (4) + photo card (160) */
-    min-width: 176px;
+    flex: 0 0 calc(var(--photo-card-width, 160px) + 16px);
+    min-width: calc(var(--photo-card-width, 160px) + 16px);
     position: relative;
   }
   .timeline-end-entry {
@@ -292,7 +311,7 @@
   .line-end-target {
     display: none;
     position: absolute;
-    left: 176px;
+    left: calc(var(--photo-card-width, 160px) + 16px);
     top: 0;
   }
   .line-end-target.line-end { display: flex; }
@@ -387,8 +406,8 @@
     transition: border-color 0.12s, background 0.12s, box-shadow 0.18s, transform 0.18s ease;
     position: relative;
     overflow: hidden;
-    width: 160px;
-    flex: 0 0 160px;
+    width: var(--photo-card-width, 160px);
+    flex: 0 0 var(--photo-card-width, 160px);
     will-change: transform;
     content-visibility: auto;
     contain-intrinsic-size: 160px 214px;
@@ -402,7 +421,7 @@
 
   .photo-thumb {
     width: 100%;
-    height: 140px;
+    height: var(--photo-thumb-height, 140px);
     background: #1e1e28;
     display: flex;
     align-items: center;
@@ -534,7 +553,7 @@
   .pool-card.selected { border-color: #8a90f0; box-shadow: 0 0 0 2px rgba(91,106,240,0.45); }
   .pool-thumb {
     width: 100%;
-    height: 48px;
+    height: var(--photo-thumb-height, 140px);
     border-radius: 3px;
     background: #1e1e28;
     display: flex;
@@ -778,6 +797,14 @@
   </div>
 </div>
 
+<div class="zoom-bar" aria-label="Photo size control">
+  <button type="button" onclick="changeZoom(-10)" aria-label="Decrease photo size">−</button>
+    <input type="range" id="zoomRange" min="60" max="200" step="10" value="100"
+    oninput="setZoom(this.value)" aria-label="Photo size">
+  <button type="button" onclick="changeZoom(10)" aria-label="Increase photo size">+</button>
+  <span class="zoom-value" id="zoomValue">100%</span>
+</div>
+
 <div class="modal-overlay" id="tsModal" style="display:none">
   <div class="modal">
     <h2 id="modalTitle">Set Timestamp</h2>
@@ -865,6 +892,7 @@ let unplacedSortMode = 'name';
 let importConcurrencyMultiplier = 2;
 let incrementalImportEnabled = true;
 let sidebarWidth = 260;
+let zoomLevel = 100;
 let viewerObjectURL = null;
 let viewerPhotoId = null;
 let pointerDrag = null;
@@ -988,6 +1016,27 @@ function normalizeSidebarWidth(value) {
 
 function applySidebarWidth() {
   document.documentElement.style.setProperty('--sidebar-width', `${sidebarWidth}px`);
+}
+
+function normalizeZoom(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.max(60, Math.min(200, Math.round(parsed / 10) * 10)) : 100;
+}
+
+function setZoom(value, save = false) {
+  zoomLevel = normalizeZoom(value);
+  const scale = zoomLevel / 100;
+  document.documentElement.style.setProperty('--photo-card-width', `${160 * scale}px`);
+  document.documentElement.style.setProperty('--photo-thumb-height', `${140 * scale}px`);
+  const range = document.getElementById('zoomRange');
+  const label = document.getElementById('zoomValue');
+  if (range) range.value = String(zoomLevel);
+  if (label) label.textContent = `${zoomLevel}%`;
+  if (save) scheduleSessionSave();
+}
+
+function changeZoom(delta) {
+  setZoom(zoomLevel + delta, true);
 }
 
 let sidebarResize = null;
@@ -1298,6 +1347,7 @@ function buildSessionState() {
     importConcurrencyMultiplier,
     incrementalImportEnabled,
     sidebarWidth,
+    zoomLevel,
     timeline: [...timeline],
     unplaced: [...unplaced],
     photos: cleanPhotos
@@ -1314,6 +1364,8 @@ function restoreSessionState(state) {
   incrementalImportEnabled = state.incrementalImportEnabled !== false;
   sidebarWidth = normalizeSidebarWidth(state.sidebarWidth);
   applySidebarWidth();
+  zoomLevel = normalizeZoom(state.zoomLevel);
+  setZoom(zoomLevel);
   timeline = Array.isArray(state.timeline) ? state.timeline.map(String) : [];
   unplaced = Array.isArray(state.unplaced) ? state.unplaced.map(String) : [];
 
