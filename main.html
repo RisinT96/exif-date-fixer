@@ -733,6 +733,12 @@
     cursor: pointer;
   }
   .viewer-close:hover { background: #3a3a48; }
+  .viewer-actions {
+    position: fixed;
+    top: 18px; left: 20px;
+    display: flex; gap: 8px;
+  }
+  .viewer-actions button { background: rgba(30,30,40,0.88); }
   .viewer-fallback { color: #8a8690; font-size: 14px; text-align: center; }
   .session-restore {
     position: fixed; inset: 0; z-index: 300;
@@ -858,7 +864,7 @@
 
 <div class="context-menu" id="cardContextMenu" style="display:none">
   <button type="button" onclick="removeSelectedFromTimeline()">Remove</button>
-  <button type="button" onclick="deleteSelectedPhotos()">Delete permanently</button>
+  <button type="button" onclick="deleteSelectedPhotos()">Remove from organizer</button>
 </div>
 
 <div class="modal-overlay" id="summaryModal" style="display:none">
@@ -905,7 +911,12 @@
 
 <div class="viewer-overlay" id="photoViewer" style="display:none"
      role="dialog" aria-modal="true" aria-label="Photo viewer"
-     onclick="handleViewerBackgroundClick(event)">
+  onclick="handleViewerBackgroundClick(event)">
+  <div class="viewer-actions">
+    <button class="btn btn-ghost" type="button" onclick="setViewerTimestamp()">Set timestamp</button>
+    <button class="btn btn-ghost" type="button" id="viewerRemoveFromTimeline" onclick="removeViewerFromTimeline()">Remove from timeline</button>
+    <button class="btn btn-ghost" type="button" onclick="deleteViewerPhoto()">Remove from organizer</button>
+  </div>
   <button class="viewer-close" type="button" onclick="closePhotoViewer()" aria-label="Close photo viewer">×</button>
   <img class="viewer-image" id="viewerImage" alt="">
   <div class="viewer-fallback" id="viewerFallback" style="display:none"></div>
@@ -2185,7 +2196,7 @@ function poolCardMarkup(id) {
   const selected = selectedIds.has(String(id)) ? ' selected' : '';
   return `<div class="pool-card${selected}" data-photo-id="${id}"
     title="${photo.name.replace(/"/g,'&quot;')}">
-    <div class="pool-thumb">${photo.thumbURL ? `<img src="${photo.thumbURL}" loading="lazy" decoding="async" alt="">` : '🖼'}<button type="button" class="view-btn" data-action="view" title="Open fullscreen" aria-label="Open ${escapeHtml(photo.name)} fullscreen">⛶</button><button type="button" class="pool-delete-btn" data-action="delete" title="Delete permanently" aria-label="Delete ${escapeHtml(photo.name)} permanently">🗑</button></div>
+    <div class="pool-thumb">${photo.thumbURL ? `<img src="${photo.thumbURL}" loading="lazy" decoding="async" alt="">` : '🖼'}<button type="button" class="view-btn" data-action="view" title="Open fullscreen" aria-label="Open ${escapeHtml(photo.name)} fullscreen">⛶</button><button type="button" class="pool-delete-btn" data-action="delete" title="Remove from organizer" aria-label="Remove ${escapeHtml(photo.name)} from organizer">🗑</button></div>
     <div class="pool-name">${photo.name}</div>
   </div>`;
 }
@@ -2929,6 +2940,7 @@ function openPhotoViewer(event, id) {
 
   closePhotoViewer();
   viewerPhotoId = photoId;
+  document.getElementById('viewerRemoveFromTimeline').disabled = !photo.inTimeline;
   const overlay = document.getElementById('photoViewer');
   const image = document.getElementById('viewerImage');
   const fallback = document.getElementById('viewerFallback');
@@ -2980,6 +2992,27 @@ function closePhotoViewer() {
 
 function handleViewerBackgroundClick(event) {
   if (event.target.id === 'photoViewer') closePhotoViewer();
+}
+
+function setViewerTimestamp() {
+  if (!viewerPhotoId) return;
+  const id = viewerPhotoId;
+  closePhotoViewer();
+  openTimestampModal(id);
+}
+
+function removeViewerFromTimeline() {
+  if (!viewerPhotoId || !photos[viewerPhotoId]?.inTimeline) return;
+  const id = viewerPhotoId;
+  closePhotoViewer();
+  removeFromTimeline(id);
+}
+
+function deleteViewerPhoto() {
+  if (!viewerPhotoId) return;
+  const id = viewerPhotoId;
+  closePhotoViewer();
+  deletePhotos([id]);
 }
 
 function navigatePhotoViewer(direction) {
