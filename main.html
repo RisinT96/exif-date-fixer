@@ -979,6 +979,7 @@ const MAX_HISTORY = 100;
 const MIN_IMPORT_CONCURRENCY = 1;
 const IMPORT_UI_FLUSH_INTERVAL_MS = 350;
 const IMPORT_PROGRESS_UPDATE_INTERVAL_MS = 150;
+const SESSION_RESTORE_YIELD_INTERVAL = 500;
 let processingProgressTimer = null;
 const performanceStats = new Map();
 
@@ -1525,7 +1526,7 @@ async function restoreSessionState(state, onProgress = null) {
       _interpolated: null
     };
     estimatedAppBytes += estimatePhotoBytes(photos[id]);
-    if (onProgress && ((index + 1) % 75 === 0 || index + 1 === entries.length)) {
+    if (onProgress && ((index + 1) % SESSION_RESTORE_YIELD_INTERVAL === 0 || index + 1 === entries.length)) {
       onProgress(index + 1, entries.length);
       await new Promise(resolve => requestAnimationFrame(resolve));
     }
