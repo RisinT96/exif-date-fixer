@@ -3307,6 +3307,11 @@ function openPhotoViewer(event, id) {
   const photo = photos[photoId];
   if (!photo) return;
 
+  selectedIds.clear();
+  selectedIds.add(photoId);
+  selectionAnchor = { source: photo.inTimeline ? 'timeline' : 'pool', id: photoId };
+  updateSelectionUI();
+
   closePhotoViewer();
   viewerPhotoId = photoId;
   document.getElementById('viewerRemoveFromTimeline').disabled = !photo.inTimeline;
@@ -3334,6 +3339,7 @@ function openPhotoViewer(event, id) {
 
   overlay.style.display = 'flex';
   document.body.style.overflow = 'hidden';
+  if (photo.inTimeline) focusTimelinePhotoIfNeeded(photoId, true);
 }
 
 function showViewerFallback(photo) {
@@ -3489,6 +3495,7 @@ function cancelTimelineScrollAnimation() {
 }
 
 function animateTimelineScrollTo(scroll, targetTop, requestedAt = performance.now()) {
+  targetTop = Math.max(0, Math.min(targetTop, scroll.scrollHeight - scroll.clientHeight));
   if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
     scroll.scrollTop = targetTop;
     return;
