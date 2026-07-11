@@ -757,7 +757,7 @@
   }
   .viewer-meta .photo-time { font-size: 17px; min-height: 22px; }
   .viewer-meta .photo-badge { font-size: 14px; padding: 4px 8px; }
-  .viewer-filename { color: var(--color-text-strong); font-size: 15px; font-weight: 600; }
+  .viewer-filename { max-width: min(70vw, 900px); color: var(--color-text-strong); font-size: 15px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .viewer-tags { min-height: 27px; display: flex; align-items: center; gap: 7px; }
   .viewer-close {
     position: fixed;
@@ -3454,7 +3454,8 @@ function updateViewerMeta(photo) {
     : photo._interpolated ? '<span class="photo-badge badge-interp">~</span>' : '';
   const source = sourceBadgeMarkup(photo, isAnchor);
   const timeClass = isAnchor ? 'known' : photo._interpolated ? 'interpolated' : '';
-  meta.innerHTML = `<span class="viewer-filename">${escapeHtml(photo.name || '')}</span><span class="photo-time ${timeClass}">${display ? fmtTime(display.time) : 'No timestamp'}</span><span class="viewer-tags">${source}${badge}</span>`;
+  const fileLabel = photo.sourcePath || photo.name || '';
+  meta.innerHTML = `<span class="viewer-filename" title="${escapeHtml(fileLabel)}">${escapeHtml(fileLabel)}</span><span class="photo-time ${timeClass}">${display ? fmtTime(display.time) : 'No timestamp'}</span><span class="viewer-tags">${source}${badge}</span>`;
 }
 
 function showViewerFallback(photo) {
