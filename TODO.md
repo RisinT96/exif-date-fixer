@@ -1,5 +1,10 @@
 # TODO
 
+## Features
+
+- [ ] When viewing fullscreen, it should track which photo is moved and scroll the timeline to try an keep it in the center (handle begin/end edge cases), updating the current selection to match the currently viewed photo.
+- [ ] Explore option of updating exif metadata in-place, and not just exporting it via a CSV.
+
 ## Large-collection performance
 
 ### 1. Measure the current bottlenecks
