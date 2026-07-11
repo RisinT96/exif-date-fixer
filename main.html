@@ -16,7 +16,7 @@
     --color-muted: #8a8690;
     --color-accent: #5b6af0;
     --color-anchor: #4caf82;
-    --color-interpolated: #5b6af0;
+    --color-interpolated: #c084fc;
     --color-unplaced: #c87a30;
   }
 
@@ -434,8 +434,8 @@
   .photo-card:hover { border-color: #3a3a50; background: #22222e; }
   .photo-card.dragging { opacity: 0.4; cursor: grabbing; }
   .photo-card.selected { border-color: #8a90f0; box-shadow: 0 0 0 2px rgba(91,106,240,0.45); }
-  .photo-card.anchored { border-top: 3px solid var(--color-anchor); }
-  .photo-card.interpolated { border-top: 3px solid var(--color-interpolated); }
+  .photo-card.anchored { border-top: 3px solid var(--color-anchor); border-bottom: 3px solid var(--color-anchor); }
+  .photo-card.interpolated { border-top: 3px solid var(--color-interpolated); border-bottom: 3px solid var(--color-interpolated); }
   .photo-card.unplaced-card { border-top: 3px solid #6a4a20; }
 
   .photo-thumb {
@@ -503,7 +503,7 @@
     font-variant-numeric: tabular-nums;
   }
   .photo-time.known { color: var(--color-anchor); }
-  .photo-time.interpolated { color: #7b8af0; }
+  .photo-time.interpolated { color: var(--color-interpolated); }
 
   .photo-badge {
     font-size: max(10px, calc(10px * var(--photo-text-scale, 1)));
@@ -514,7 +514,7 @@
     flex-shrink: 0;
   }
   .badge-anchor { background: #1a3328; color: var(--color-anchor); }
-  .badge-interp { background: #1a1c3a; color: var(--color-interpolated); }
+  .badge-interp { background: #2a1d3a; color: var(--color-interpolated); }
   .badge-cam1 { background: #2a1e10; color: var(--color-unplaced); }
   .badge-cam2 { background: #1a2030; color: #4a90d0; }
   .badge-source { background: #25253a; color: #a5a8f0; }
@@ -786,7 +786,7 @@
   <div class="header-actions">
     <div class="legend">
       <span><span class="legend-dot" style="background:#4caf82"></span>Anchored (has timestamp)</span>
-      <span><span class="legend-dot" style="background:#5b6af0"></span>Interpolated</span>
+      <span><span class="legend-dot" style="background:var(--color-interpolated)"></span>Interpolated</span>
       <span><span class="legend-dot" style="background:#c87a30"></span>Unplaced</span>
     </div>
     <span class="session-status" id="sessionStatus">Loading session…</span>
