@@ -298,6 +298,8 @@
     align-content: flex-start;
     align-items: stretch;
   }
+  .timeline-list.virtualized { display: block; position: relative; }
+  .timeline-list.virtualized .timeline-entry { position: absolute; }
 
   /* Keep each leading separator attached to its photo when flex rows wrap. */
   .timeline-entry {
@@ -410,7 +412,6 @@
     overflow: hidden;
     width: var(--photo-card-width, 160px);
     flex: 0 0 var(--photo-card-width, 160px);
-    will-change: transform;
     content-visibility: auto;
     contain-intrinsic-size: var(--photo-card-width, 160px) calc(var(--photo-thumb-height, 140px) + 74px);
   }
@@ -938,6 +939,8 @@ let viewerObjectURL = null;
 let viewerPhotoId = null;
 let pointerDrag = null;
 let suppressCardClick = false;
+let virtualTimelineKey = null;
+let virtualTimelineFrame = null;
 
 const CAM1 = 'DSC';
 const CAM2 = '976A';
@@ -980,6 +983,9 @@ const MIN_IMPORT_CONCURRENCY = 1;
 const IMPORT_UI_FLUSH_INTERVAL_MS = 350;
 const IMPORT_PROGRESS_UPDATE_INTERVAL_MS = 150;
 const SESSION_RESTORE_YIELD_INTERVAL = 500;
+const VIRTUAL_TIMELINE_THRESHOLD = 200;
+const VIRTUAL_TIMELINE_OVERSCAN_ROWS = 10;
+const VIRTUAL_TIMELINE_RENDER_STRIDE_ROWS = 5;
 let processingProgressTimer = null;
 const performanceStats = new Map();
 
@@ -1096,6 +1102,8 @@ function setZoom(value, save = false) {
   const label = document.getElementById('zoomValue');
   if (range) range.value = String(zoomLevel);
   if (label) label.textContent = `${zoomLevel}%`;
+  invalidateVirtualTimeline();
+  scheduleVirtualTimelineRender();
   if (save) scheduleSessionSave();
 }
 
@@ -2315,6 +2323,10 @@ function applyTimelineFilter() {
 
 function setTimelineFilter(value) {
   timelineFilter = ['all', 'interp', 'metadata', 'manual'].includes(value) ? value : 'all';
+  if (timeline.length > VIRTUAL_TIMELINE_THRESHOLD) {
+    render({ renderPool: false, animate: false });
+    return;
+  }
   applyTimelineFilter();
   scheduleSessionSave();
 }
@@ -2348,7 +2360,7 @@ function poolGroupedMarkup() {
   ).join('');
 }
 
-function timelineEntryMarkup(id) {
+function timelineEntryMarkup(id, index = 0, style = '') {
   const photo = photos[id];
   const displayTime = getDisplayTime(photo);
   const isAnchor = photo.timestamp && !photo._interpolated;
@@ -2361,7 +2373,7 @@ function timelineEntryMarkup(id) {
     ? `<span class="photo-badge badge-anchor">ANCHOR</span>`
     : isInterp ? `<span class="photo-badge badge-interp">~</span>` : '';
   const sourceBadge = sourceBadgeMarkup(photo, isAnchor);
-  return `<div class="timeline-entry">${mkDropTarget(0)}<div class="photo-card ${cardClass}${selectedClass}" data-photo-id="${id}">
+  return `<div class="timeline-entry"${style} data-timeline-index="${index}">${mkDropTarget(index)}<div class="photo-card ${cardClass}${selectedClass}" data-photo-id="${id}">
     <div class="photo-thumb">${photo.thumbURL ? `<img src="${photo.thumbURL}" loading="lazy" decoding="async" alt="">` : '🖼'}<button type="button" class="view-btn" data-action="view" title="Open fullscreen" aria-label="Open ${escapeHtml(photo.name)} fullscreen">⛶</button></div>
     <div class="photo-footer">
       <div class="photo-name">${photo.name}</div>
@@ -2374,7 +2386,7 @@ function timelineEntryMarkup(id) {
         <button class="btn btn-ghost" data-action="edit-timestamp" style="font-size:10px;padding:2px 5px;flex-shrink:0" title="Edit Timestamp">✎</button>
       </div>
     </div>
-  </div>${mkDropTarget(0, 'line-end-target')}</div>`;
+  </div>${mkDropTarget(index + 1, 'line-end-target')}</div>`;
 }
 
 function elementFromMarkup(markup) {
@@ -2416,6 +2428,7 @@ function insertPoolCards(ids) {
 }
 
 function removeTimelineEntries(ids) {
+  if (rerenderVirtualTimelineAfterChange()) return;
   const list = document.getElementById('timelineList');
   if (!list.querySelector('.timeline-entry')) return;
   const selected = new Set(ids.map(String));
@@ -2436,6 +2449,7 @@ function removeTimelineEntries(ids) {
 }
 
 function insertTimelineEntries(ids) {
+  if (rerenderVirtualTimelineAfterChange()) return;
   const inserted = new Set(ids.map(String));
   const list = document.getElementById('timelineList');
   if (ids.length > 24) {
@@ -2586,6 +2600,19 @@ function getTimelineChangeAffectedIds(previousTimeline, nextTimeline, enteringId
 }
 
 function reorderTimelineDom(affectedIds, animateIds = affectedIds) {
+  if (shouldVirtualizeTimeline()) {
+    const oldRects = getTimelineCardRects(animateIds);
+    invalidateVirtualTimeline();
+    renderVirtualTimeline();
+    refreshTimelineCards(affectedIds);
+    animateTimelineCards(oldRects, animateIds);
+    updateMemoryStatus();
+    updateHistoryButtons();
+    updateStats();
+    scheduleSessionSave();
+    return;
+  }
+  if (rerenderVirtualTimelineAfterChange()) return;
   const list = document.getElementById('timelineList');
   const entriesById = new Map();
   list.querySelectorAll('.timeline-entry').forEach(entry => {
@@ -2774,16 +2801,15 @@ function getDropTargetAtPoint(x, y) {
 function buildDropZones() {
   const start = performance.now();
   pointerDrag?.lineEndTargets?.forEach(target => { target.style.display = ''; });
-  const entries = [...document.querySelectorAll('#timelineList .timeline-entry:not(.filtered-out)')];
+  const list = document.getElementById('timelineList');
+  const entries = [...list.querySelectorAll('.timeline-entry:not(.filtered-out)')];
   const scroll = document.querySelector('.timeline-scroll');
   if (!entries.length || !scroll) return [];
-  const scale = zoomLevel / 100;
-  const entryWidth = 160 * scale + 16;
-  const columns = Math.max(1, Math.floor((scroll.clientWidth - 32 + 4) / (entryWidth + 4)));
-  const rowHeight = 140 * scale + 82;
-  const first = Math.max(0, (Math.floor(Math.max(0, scroll.scrollTop - 16) / rowHeight) - 2) * columns);
-  const last = Math.min(entries.length, (Math.ceil((scroll.scrollTop + scroll.clientHeight) / rowHeight) + 3) * columns);
-  const visibleEntries = entries.slice(first, last);
+  const virtualized = list.classList.contains('virtualized');
+  const { columns, rowHeight } = virtualTimelineLayout();
+  const first = virtualized ? 0 : Math.max(0, (Math.floor(Math.max(0, scroll.scrollTop - 16) / rowHeight) - 2) * columns);
+  const last = virtualized ? entries.length : Math.min(entries.length, (Math.ceil((scroll.scrollTop + scroll.clientHeight) / rowHeight) + 3) * columns);
+  const visibleEntries = virtualized ? entries : entries.slice(first, last);
   const zones = [];
   const lineEndTargets = [];
   visibleEntries.forEach((entry, index) => {
@@ -3323,6 +3349,69 @@ function animateTimelineCards(oldRects, onlyIds = null) {
 // ── FULL RENDER FALLBACK ───────────────────────────────────────────────────
 // Prefer the incremental selection, reorder, transfer, and history paths for
 // frequent interactions. This function is for startup and broad state changes.
+function shouldVirtualizeTimeline() {
+  return timeline.length > VIRTUAL_TIMELINE_THRESHOLD && timelineFilter === 'all';
+}
+
+function invalidateVirtualTimeline() {
+  virtualTimelineKey = null;
+}
+
+function virtualTimelineLayout() {
+  const scroll = document.querySelector('.timeline-scroll');
+  const scale = zoomLevel / 100;
+  const entryWidth = 160 * scale + 16;
+  const columns = Math.max(1, Math.floor((scroll.clientWidth - 32 + 4) / (entryWidth + 4)));
+  return { scroll, columns, entryWidth, rowHeight: 140 * scale + 82 };
+}
+
+function renderVirtualTimeline() {
+  if (!shouldVirtualizeTimeline()) return;
+  const { scroll, columns, entryWidth, rowHeight } = virtualTimelineLayout();
+  const visibleFirstRow = Math.floor(Math.max(0, scroll.scrollTop - 16) / rowHeight);
+  const firstRow = Math.max(0,
+    Math.floor(visibleFirstRow / VIRTUAL_TIMELINE_RENDER_STRIDE_ROWS) * VIRTUAL_TIMELINE_RENDER_STRIDE_ROWS
+    - VIRTUAL_TIMELINE_OVERSCAN_ROWS
+  );
+  const lastRow = firstRow + Math.ceil(scroll.clientHeight / rowHeight) + VIRTUAL_TIMELINE_OVERSCAN_ROWS * 2;
+  const start = firstRow * columns;
+  const end = Math.min(timeline.length, lastRow * columns);
+  const key = `${start}:${end}:${columns}:${rowHeight}:${timeline.length}`;
+  if (key === virtualTimelineKey) return;
+  virtualTimelineKey = key;
+  const list = document.getElementById('timelineList');
+  list.classList.add('virtualized');
+  list.style.height = `${Math.ceil(timeline.length / columns) * rowHeight}px`;
+  list.innerHTML = timeline.slice(start, end).map((id, offset) => {
+    const index = start + offset;
+    const left = (index % columns) * (entryWidth + 4);
+    const top = Math.floor(index / columns) * rowHeight;
+    return timelineEntryMarkup(id, index, ` style="left:${left}px;top:${top}px"`);
+  }).join('');
+}
+
+function scheduleVirtualTimelineRender() {
+  if (!shouldVirtualizeTimeline() || virtualTimelineFrame !== null) return;
+  virtualTimelineFrame = requestAnimationFrame(() => {
+    virtualTimelineFrame = null;
+    renderVirtualTimeline();
+  });
+}
+
+function rerenderVirtualTimelineAfterChange() {
+  const list = document.getElementById('timelineList');
+  if (shouldVirtualizeTimeline()) {
+    invalidateVirtualTimeline();
+    renderVirtualTimeline();
+    return true;
+  }
+  if (list.classList.contains('virtualized')) {
+    render({ renderPool: false, animate: false });
+    return true;
+  }
+  return false;
+}
+
 function render(options = {}) {
   const start = performance.now();
   renderNow(options);
@@ -3353,6 +3442,8 @@ function renderNow(options = {}) {
   // Timeline
   const list = document.getElementById('timelineList');
   if (!timeline.length && !unplaced.length) {
+    list.classList.remove('virtualized');
+    list.style.height = '';
     list.innerHTML = `<div class="empty-state">
       <h2>Timeline is empty</h2>
       <p>Load photos using the panel on the left.<br>Photos with existing timestamps appear here automatically as anchors.</p>
@@ -3363,6 +3454,8 @@ function renderNow(options = {}) {
   }
 
   if (!timeline.length) {
+    list.classList.remove('virtualized');
+    list.style.height = '';
     list.innerHTML = `<div class="empty-state">
       <h2>Drag photos here</h2>
       <p>Drag photos from the left panel into this timeline.<br>Set at least two timestamps to enable interpolation.</p>
@@ -3372,6 +3465,18 @@ function renderNow(options = {}) {
     return;
   }
 
+  if (shouldVirtualizeTimeline()) {
+    invalidateVirtualTimeline();
+    renderVirtualTimeline();
+    document.getElementById('exportBtn').disabled = false;
+    scheduleSessionSave();
+    return;
+  }
+
+  invalidateVirtualTimeline();
+  list.classList.remove('virtualized');
+  list.style.height = '';
+  
   let html = '';
   timeline.forEach((id, i) => {
     const p = photos[id];
@@ -3430,6 +3535,7 @@ document.getElementById('timelineList').addEventListener('dblclick', onCardConta
 document.getElementById('poolGrid').addEventListener('pointerdown', onCardContainerPointerDown);
 document.getElementById('timelineList').addEventListener('pointerdown', onCardContainerPointerDown);
 document.getElementById('timelineList').addEventListener('contextmenu', onTimelineContextMenu);
+document.querySelector('.timeline-scroll').addEventListener('scroll', scheduleVirtualTimelineRender, { passive: true });
 document.getElementById('sidebarResizer').addEventListener('pointerdown', onSidebarResizePointerDown);
 document.addEventListener('keydown', e => {
   if (document.getElementById('photoViewer').style.display !== 'none') {
@@ -3473,7 +3579,10 @@ document.addEventListener('keydown', e => {
     else undoLastChange();
   }
 });
-window.addEventListener('resize', updateTimelineLineEnds);
+window.addEventListener('resize', () => {
+  invalidateVirtualTimeline();
+  scheduleVirtualTimelineRender();
+});
 document.getElementById('unplacedSort').addEventListener('change', function() {
   unplacedSortMode = this.value;
   sortUnplacedByName();
