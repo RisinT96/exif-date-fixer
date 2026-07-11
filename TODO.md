@@ -14,7 +14,7 @@
 - [x] Avoid rebuilding the entire timeline and unplaced-photo pool for selection changes.
 - [x] Update only selection classes when selection changes.
 - [ ] Avoid recalculating sorting and membership checks repeatedly during one render.
-- [ ] Limit or disable card transition animations for large collections.
+- [x] Limit or disable card transition animations for large collections - rejected, animations are quick and don't pose issues.
 
 ### 3. Make thumbnails cheaper to display
 
