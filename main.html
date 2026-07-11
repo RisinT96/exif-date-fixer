@@ -987,9 +987,9 @@ const SESSION_RESTORE_YIELD_INTERVAL = 500;
 const VIRTUAL_TIMELINE_THRESHOLD = 200;
 const VIRTUAL_TIMELINE_OVERSCAN_ROWS = 12;
 const VIRTUAL_TIMELINE_RENDER_STRIDE_ROWS = 10;
-const STRUCTURAL_ANIMATION_SETTLE_MS = 600;
 let processingProgressTimer = null;
 const performanceStats = new Map();
+const structuralAnimations = new Set();
 
 function recordPerformance(label, start) {
   const ms = performance.now() - start;
@@ -1002,6 +1002,20 @@ function recordPerformance(label, start) {
 
 function recordPerformanceAfterPaint(label, start) {
   requestAnimationFrame(() => requestAnimationFrame(() => recordPerformance(label, start)));
+}
+
+function trackStructuralAnimation(animation) {
+  structuralAnimations.add(animation);
+  animation.finished.catch(() => {}).finally(() => structuralAnimations.delete(animation));
+  return animation;
+}
+
+function afterStructuralAnimations(action) {
+  requestAnimationFrame(() => {
+    const animations = [...structuralAnimations];
+    if (!animations.length) { action(); return; }
+    Promise.allSettled(animations.map(animation => animation.finished)).then(() => requestAnimationFrame(action));
+  });
 }
 
 function performanceSummaryMarkup() {
@@ -2199,7 +2213,7 @@ function removeSelectedFromTimeline() {
   insertPoolCards(ids, 'none');
   playCardFlights(flights, document.getElementById('poolGrid'));
   finalizeIncrementalTransfer(getTransferAffectedIds(previousTimeline, timeline, new Set(ids)));
-  focusTimelinePhotoIfNeeded(focusId);
+  focusTimelinePhotoIfNeeded(focusId, 480, true);
 }
 
 function deleteSelectedPhotos() {
@@ -2263,7 +2277,7 @@ function deletePhotos(ids) {
   scheduleSessionSave();
   recordPerformance('Delete from Editor', start);
   recordPerformanceAfterPaint('Delete to paint', start);
-  focusTimelinePhotoIfNeeded(focusId);
+  focusTimelinePhotoIfNeeded(focusId, 0, true);
 }
 
 function selectAllInActiveList() {
@@ -3367,26 +3381,33 @@ function getTimelineCardRects(onlyIds = null) {
 
 function getRemovalFocusId(previousTimeline, ids) {
   const removed = new Set(ids.map(String));
-  const lastIndex = Math.max(...ids.map(id => previousTimeline.indexOf(String(id))));
-  if (lastIndex < 0) return null;
-  for (let index = lastIndex + 1; index < previousTimeline.length; index++) {
-    if (!removed.has(String(previousTimeline[index]))) return String(previousTimeline[index]);
+  const displayIds = timelineFilter === 'all'
+    ? previousTimeline
+    : previousTimeline.filter(id => timelineFilterKind(photos[id]) === timelineFilter);
+  const positions = ids.map(id => displayIds.indexOf(String(id))).filter(index => index >= 0);
+  if (!positions.length) return null;
+  const lastIndex = Math.max(...positions);
+  for (let index = lastIndex + 1; index < displayIds.length; index++) {
+    if (!removed.has(String(displayIds[index]))) return String(displayIds[index]);
+  }
+  for (let index = Math.min(...positions) - 1; index >= 0; index--) {
+    if (!removed.has(String(displayIds[index]))) return String(displayIds[index]);
   }
   return null;
 }
 
-function focusTimelinePhotoIfNeeded(id) {
+function focusTimelinePhotoIfNeeded(id, delay = 0, forceCenter = false) {
   if (!id || !timeline.includes(String(id))) return;
-  const delay = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 0 : STRUCTURAL_ANIMATION_SETTLE_MS;
-  setTimeout(() => requestAnimationFrame(() => {
+  const requestedAt = performance.now();
+  const focus = () => requestAnimationFrame(() => {
+    recordPerformance('Focus scroll handoff', requestedAt);
     const scroll = document.querySelector('.timeline-scroll');
     const card = document.querySelector(`#timelineList .photo-card[data-photo-id="${id}"]`);
     const area = scroll?.getBoundingClientRect();
     const rect = card?.getBoundingClientRect();
-    if (!card && timelineFilter !== 'all') return;
     const safeTop = area ? area.top + Math.max(32, area.height * 0.2) : 0;
     const safeBottom = area ? area.bottom - Math.max(32, area.height * 0.2) : 0;
-    if (area && rect && rect.top >= safeTop && rect.bottom <= safeBottom) return;
+    if (!forceCenter && area && rect && rect.top >= safeTop && rect.bottom <= safeBottom) return;
 
     if (shouldVirtualizeTimeline()) {
       const { columns, rowHeight } = virtualTimelineLayout();
@@ -3399,7 +3420,10 @@ function focusTimelinePhotoIfNeeded(id) {
     if (card && area && rect) {
       animateTimelineScrollTo(scroll, scroll.scrollTop + rect.top - area.top - (area.height - rect.height) / 2);
     }
-  }), delay);
+  });
+  if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) focus();
+  else if (delay) setTimeout(focus, delay);
+  else focus();
 }
 
 function cancelTimelineScrollAnimation() {
@@ -3421,7 +3445,7 @@ function animateTimelineScrollTo(scroll, targetTop) {
   const frame = now => {
     if (timelineScrollAnimation !== token) return;
     const progress = Math.min(1, (now - start) / duration);
-    const eased = -(Math.cos(Math.PI * progress) - 1) / 2;
+    const eased = progress - Math.sin(2 * Math.PI * progress) / (4 * Math.PI);
     scroll.scrollTop = startTop + distance * eased;
     if (progress < 1) requestAnimationFrame(frame);
     else timelineScrollAnimation = null;
@@ -3437,30 +3461,30 @@ function animateTimelineCards(oldRects, onlyIds = null) {
       if (onlyIds && !onlyIds.has(el.dataset.photoId)) return;
       const oldRect = oldRects.get(el.dataset.photoId);
       if (!oldRect) {
-        el.animate([
+        trackStructuralAnimation(el.animate([
           { opacity: 0, transform: 'scale(0.96)' },
           { opacity: 1, transform: 'scale(1)' }
-        ], { duration: 192, easing: 'ease-out' });
+        ], { duration: 192, easing: 'ease-out' }));
         return;
       }
       const newRect = el.getBoundingClientRect();
       const dx = oldRect.left - newRect.left;
       const dy = oldRect.top - newRect.top;
       if (Math.abs(dx) < 1 && Math.abs(dy) < 1) return;
-      el.animate([
+      trackStructuralAnimation(el.animate([
         { transform: `translate(${dx}px, ${dy}px)` },
         { transform: 'translate(0, 0)' }
-      ], { duration: 264, easing: 'cubic-bezier(.2, .8, .2, 1)' });
+      ], { duration: 264, easing: 'cubic-bezier(.2, .8, .2, 1)' }));
     });
   });
 }
 
 function animateCardEntrance(card, delay = 0) {
   if (!card || window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return;
-  card.animate([
+  trackStructuralAnimation(card.animate([
     { opacity: 0, transform: 'scale(0.94) translateY(6px)' },
     { opacity: 1, transform: 'scale(1) translateY(0)' }
-  ], { duration: 216, delay, easing: 'cubic-bezier(.2, .8, .2, 1)' });
+  ], { duration: 216, delay, easing: 'cubic-bezier(.2, .8, .2, 1)' }));
 }
 
 function animateCardExit(card, delay = 0) {
@@ -3473,10 +3497,10 @@ function animateCardExit(card, delay = 0) {
     zIndex: '300', pointerEvents: 'none'
   });
   document.body.appendChild(ghost);
-  const animation = ghost.animate([
+  const animation = trackStructuralAnimation(ghost.animate([
     { opacity: 1, transform: 'scale(1)' },
     { opacity: 0, transform: 'scale(0.92) translateY(-5px)' }
-  ], { duration: 216, delay, easing: 'ease-in', fill: 'forwards' });
+  ], { duration: 216, delay, easing: 'ease-in', fill: 'forwards' }));
   animation.onfinish = () => ghost.remove();
 }
 
@@ -3520,7 +3544,7 @@ function playCardFlights(flights, container) {
     requestAnimationFrame(() => {
       const target = container.querySelector(`[data-photo-id="${id}"]`);
       if (!target) {
-        const fallback = ghost.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 216, easing: 'ease-in', fill: 'forwards' });
+        const fallback = trackStructuralAnimation(ghost.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 216, easing: 'ease-in', fill: 'forwards' }));
         fallback.onfinish = () => ghost.remove();
         return;
       }
@@ -3528,10 +3552,10 @@ function playCardFlights(flights, container) {
       const to = target.getBoundingClientRect();
       target.style.opacity = '0';
       target.style.visibility = 'visible';
-      const animation = ghost.animate([
+      const animation = trackStructuralAnimation(ghost.animate([
         { transform: 'translate(0, 0) scale(1)', opacity: 1 },
         { transform: `translate(${to.left - from.left}px, ${to.top - from.top}px) scale(${to.width / from.width}, ${to.height / from.height})`, opacity: 0.72 }
-      ], { duration: 264, delay: Math.min(index * 18, 180), easing: 'cubic-bezier(.2, .8, .2, 1)', fill: 'forwards' });
+      ], { duration: 264, delay: Math.min(index * 18, 180), easing: 'cubic-bezier(.2, .8, .2, 1)', fill: 'forwards' }));
       animation.onfinish = () => {
         ghost.remove();
         target.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 120, easing: 'ease-out' });
@@ -3567,6 +3591,7 @@ function virtualTimelineLayout() {
 
 function renderVirtualTimeline() {
   if (!shouldVirtualizeTimeline()) return;
+  const renderStart = performance.now();
   const { scroll, columns, entryWidth, rowHeight } = virtualTimelineLayout();
   const displayIds = timelineDisplayIds();
   const list = document.getElementById('timelineList');
@@ -3575,6 +3600,7 @@ function renderVirtualTimeline() {
     list.classList.add('virtualized');
     list.style.height = '';
     list.innerHTML = '<div class="empty-state"><p>No photos match this filter.</p></div>';
+    recordPerformance('Virtual timeline render', renderStart);
     return;
   }
   const visibleFirstRow = Math.floor(Math.max(0, scroll.scrollTop - 16) / rowHeight);
@@ -3592,13 +3618,16 @@ function renderVirtualTimeline() {
   list.style.height = `${Math.ceil(displayIds.length / columns) * rowHeight}px`;
   const existingEntries = new Map([...list.querySelectorAll('.timeline-entry')]
     .map(entry => [entry.querySelector('.photo-card[data-photo-id]')?.dataset.photoId, entry]));
+  const timelineIndices = timelineFilter === 'all'
+    ? null
+    : new Map(timeline.map((id, index) => [id, index]));
   const activeIds = new Set();
   const additions = document.createDocumentFragment();
   displayIds.slice(start, end).forEach((id, offset) => {
     const index = start + offset;
     const left = (index % columns) * (entryWidth + 4);
     const top = Math.floor(index / columns) * rowHeight;
-    const timelineIndex = timeline.indexOf(id);
+    const timelineIndex = timelineIndices ? timelineIndices.get(id) : index;
     const key = String(id);
     activeIds.add(key);
     let entry = existingEntries.get(key);
@@ -3614,6 +3643,7 @@ function renderVirtualTimeline() {
     if (!activeIds.has(id)) entry.remove();
   });
   list.appendChild(additions);
+  recordPerformance('Virtual timeline render', renderStart);
 }
 
 function scheduleVirtualTimelineRender() {
