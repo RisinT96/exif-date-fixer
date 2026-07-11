@@ -269,6 +269,14 @@
   }
   .pool-folder:first-child .pool-folder-title { margin-top: 0; }
   .pool-folder-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+  .pool-header { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-bottom: 6px; }
+  .pool-header h3 { margin: 0; }
+  .pool-controls { display: flex; gap: 3px; }
+  .pool-icon-btn { width: 24px; height: 24px; padding: 0; border: 1px solid var(--color-border); border-radius: 4px; background: transparent; color: var(--color-muted); cursor: pointer; font-size: 14px; }
+  .pool-icon-btn:hover, .pool-icon-btn:focus-visible { background: #22222c; color: var(--color-text-strong); }
+  .pool-folder-title { display: flex; align-items: center; gap: 5px; cursor: pointer; }
+  .pool-folder-title button { border: 0; background: transparent; color: inherit; cursor: pointer; font-size: 18px; line-height: 1; padding: 0 2px; }
+  .pool-folder.collapsed .pool-folder-grid { display: none; }
 
   /* ── TIMELINE ── */
   .timeline-area {
@@ -835,18 +843,11 @@
       </div>
     </div>
 
-    <div class="sidebar-section">
-      <label>Stats</label>
-      <div class="stats">
-        <div>Total: <span id="statTotal">0</span></div>
-        <div>Anchored: <span id="statAnchored">0</span></div>
-        <div>Interpolated: <span id="statInterp">0</span></div>
-        <div>Unplaced: <span id="statUnplaced">0</span></div>
-      </div>
-    </div>
-
     <div class="unplaced-pool" id="unplacedPool">
-      <h3>Unplaced Photos</h3>
+      <div class="pool-header"><h3>Unplaced Photos</h3><div class="pool-controls">
+        <button class="pool-icon-btn" type="button" onclick="collapseAllPoolFolders()" title="Collapse all folders" aria-label="Collapse all folders">⊟</button>
+        <button class="pool-icon-btn" type="button" onclick="expandAllPoolFolders()" title="Expand all folders" aria-label="Expand all folders">⊞</button>
+      </div></div>
       <select id="unplacedSort" class="sort-select" aria-label="Sort unplaced photos">
         <option value="name">Sort: filename</option>
         <option value="capture">Sort: capture time</option>
@@ -995,6 +996,7 @@ let modalTargets = [];
 let selectedIds = new Set();
 let selectionAnchor = null;
 let unplacedSortMode = 'name';
+const collapsedPoolFolders = new Set();
 let importConcurrencyMultiplier = 2;
 let incrementalImportEnabled = true;
 let sidebarWidth = 260;
@@ -1266,16 +1268,6 @@ function recalculateEstimatedAppBytes() {
 
 // Immutable photo data is registered once for history. Snapshots store only
 // ordering and timestamp-related mutable state, enabling fast incremental undo.
-function updateStats() {
-  const allPhotos = Object.values(photos);
-  document.getElementById('statTotal').textContent = allPhotos.length;
-  document.getElementById('statAnchored').textContent = allPhotos
-    .filter(photo => photo.timestamp && !photo._interpolated).length;
-  document.getElementById('statInterp').textContent = allPhotos
-    .filter(photo => photo._interpolated).length;
-  document.getElementById('statUnplaced').textContent = unplaced.length;
-}
-
 function arraysEqual(a, b) {
   return a.length === b.length && a.every((value, index) => value === b[index]);
 }
@@ -1376,7 +1368,6 @@ function restoreEditorState(state) {
       changedIds.forEach(id => refreshTimelineCardDisplay(id));
     }
     updateMemoryStatus();
-    updateStats();
     updateHistoryButtons();
     scheduleSessionSave();
     return;
@@ -1416,7 +1407,6 @@ function restoreEditorState(state) {
       reconcilePoolCards(enteringPool.length ? enteringPool : leavingPool, enteringPool.length ? 'enter' : 'exit');
     }
     updateMemoryStatus();
-    updateStats();
     updateHistoryButtons();
     document.getElementById('exportBtn').disabled = !timeline.length;
     scheduleSessionSave();
@@ -1443,7 +1433,6 @@ function restoreEditorState(state) {
       refreshTimelineCards(affectedIds);
       setTimeout(updateTimelineLineEnds, 0);
       updateMemoryStatus();
-      updateStats();
       updateHistoryButtons();
       document.getElementById('exportBtn').disabled = false;
       scheduleSessionSave();
@@ -1944,7 +1933,6 @@ async function processFiles(files) {
     pendingTimelineIds = [];
     pendingUnplacedIds = [];
     renderedTimeline = [...timeline];
-    updateStats();
     document.getElementById('exportBtn').disabled = !timeline.length;
   };
   const scheduleImportedCardsFlush = () => {
@@ -2042,7 +2030,6 @@ async function processFiles(files) {
   interpolateAll();
   updateMemoryStatus();
   updateHistoryButtons();
-  updateStats();
   document.getElementById('exportBtn').disabled = !timeline.length;
   scheduleSessionSave();
 }
@@ -2339,7 +2326,6 @@ function deletePhotos(ids) {
   if (poolChanged) reconcilePoolCards(ids, 'exit');
   updateMemoryStatus();
   updateHistoryButtons();
-  updateStats();
   document.getElementById('exportBtn').disabled = !timeline.length;
   scheduleSessionSave();
   recordPerformance('Delete from Editor', start);
@@ -2508,9 +2494,44 @@ function poolGroupedMarkup() {
     ids.push(id);
     groups.set(label, ids);
   });
-  return [...groups.entries()].sort(([a], [b]) => filenameCollator.compare(a, b)).map(([label, ids]) =>
-    `<section class="pool-folder"><div class="pool-folder-title" title="${escapeHtml(label)}">${escapeHtml(label)}</div><div class="pool-folder-grid">${ids.map(poolCardMarkup).join('')}</div></section>`
-  ).join('');
+  return [...groups.entries()].sort(([a], [b]) => filenameCollator.compare(a, b)).map(([label, ids]) => {
+    const collapsed = collapsedPoolFolders.has(label);
+    const icon = collapsed ? '▸' : '▾';
+    return `<section class="pool-folder${collapsed ? ' collapsed' : ''}" data-folder="${escapeHtml(label)}"><div class="pool-folder-title" title="${escapeHtml(label)}" onclick="togglePoolFolder('${escapeHtml(label).replace(/'/g, '&#39;')}')"><button type="button" onclick="event.stopPropagation(); togglePoolFolder('${escapeHtml(label).replace(/'/g, '&#39;')}')" aria-label="${collapsed ? 'Expand' : 'Collapse'} ${escapeHtml(label)}">${icon}</button><span>${escapeHtml(label)}</span></div><div class="pool-folder-grid">${ids.map(poolCardMarkup).join('')}</div></section>`;
+  }).join('');
+}
+
+function togglePoolFolder(label) {
+  if (collapsedPoolFolders.has(label)) collapsedPoolFolders.delete(label);
+  else collapsedPoolFolders.add(label);
+  const section = [...document.querySelectorAll('#poolGrid .pool-folder')]
+    .find(element => element.dataset.folder === label);
+  if (!section) return;
+  const collapsed = collapsedPoolFolders.has(label);
+  section.classList.toggle('collapsed', collapsed);
+  const button = section.querySelector('.pool-folder-title button');
+  if (button) {
+    button.textContent = collapsed ? '▸' : '▾';
+    button.setAttribute('aria-label', `${collapsed ? 'Expand' : 'Collapse'} ${label}`);
+  }
+}
+
+function collapseAllPoolFolders() {
+  poolDisplayIds().forEach(id => collapsedPoolFolders.add(poolFolderLabel(photos[id])));
+  document.querySelectorAll('#poolGrid .pool-folder').forEach(section => {
+    section.classList.add('collapsed');
+    const button = section.querySelector('.pool-folder-title button');
+    if (button) { button.textContent = '▸'; button.setAttribute('aria-label', `Expand ${section.dataset.folder}`); }
+  });
+}
+
+function expandAllPoolFolders() {
+  collapsedPoolFolders.clear();
+  document.querySelectorAll('#poolGrid .pool-folder').forEach(section => {
+    section.classList.remove('collapsed');
+    const button = section.querySelector('.pool-folder-title button');
+    if (button) { button.textContent = '▾'; button.setAttribute('aria-label', `Collapse ${section.dataset.folder}`); }
+  });
 }
 
 function timelineEntryMarkup(id, index = 0, style = '') {
@@ -2654,7 +2675,6 @@ function finalizeIncrementalTransfer(refreshIds = timeline, animateIds = null) {
     </div>` + mkDropTarget(0);
     updateMemoryStatus();
     updateHistoryButtons();
-    updateStats();
     document.getElementById('exportBtn').disabled = true;
     scheduleSessionSave();
     return;
@@ -2664,7 +2684,6 @@ function finalizeIncrementalTransfer(refreshIds = timeline, animateIds = null) {
   if (animateIds?.size) animateTimelineCards(new Map(), animateIds);
   updateMemoryStatus();
   updateHistoryButtons();
-  updateStats();
   document.getElementById('exportBtn').disabled = false;
   scheduleSessionSave();
 }
@@ -2739,7 +2758,6 @@ function reinterpolateAllPhotos() {
   interpolateAll();
   refreshTimelineCards(timeline);
   updateMemoryStatus();
-  updateStats();
   scheduleSessionSave();
 }
 
@@ -2780,7 +2798,6 @@ function reorderTimelineDom(affectedIds, animateIds = affectedIds) {
     animateTimelineCards(oldRects);
     updateMemoryStatus();
     updateHistoryButtons();
-    updateStats();
     scheduleSessionSave();
     return;
   }
@@ -2808,7 +2825,6 @@ function reorderTimelineDom(affectedIds, animateIds = affectedIds) {
   animateTimelineCards(oldRects);
   updateMemoryStatus();
   updateHistoryButtons();
-  updateStats();
   scheduleSessionSave();
 }
 
@@ -3181,7 +3197,6 @@ function refreshAfterTimestampChange(changedTimelineIds, changedPoolPhoto) {
   if (changedPoolPhoto && unplacedSortMode === 'capture') reconcilePoolCards();
   updateMemoryStatus();
   updateHistoryButtons();
-  updateStats();
   scheduleSessionSave();
 }
 
@@ -3856,7 +3871,6 @@ function renderNow(options = {}) {
     : getTimelineCardRects(options.animateIds || null);
   updateMemoryStatus();
   updateHistoryButtons();
-  updateStats();
 
   // Pool
   if (options.renderPool !== false) {
