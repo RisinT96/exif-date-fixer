@@ -278,6 +278,10 @@
   }
 
   .timeline-toolbar strong { color: #c8c4be; }
+  .timeline-toolbar > span { flex: 1; min-width: 0; }
+  .timeline-filter { margin-left: auto; display: flex; align-items: center; gap: 5px; font-size: 11px; white-space: nowrap; }
+  .timeline-filter select { padding: 4px 6px; border: 1px solid #2e2e3a; border-radius: 5px; background: #1e1e28; color: #c8c4be; font-size: 11px; }
+  .timeline-entry.filtered-out { display: none; }
 
   .timeline-scroll {
     flex: 1;
@@ -806,6 +810,9 @@
     <div class="timeline-toolbar">
       <span>Drag photos into the timeline; once it contains photos, use the slim separators between images. Use Ctrl/Cmd-click to select multiple photos, or Shift-click for a range. Timestamps are <strong>interpolated automatically</strong> and your session is <strong>saved automatically</strong> in this browser.</span>
       <button class="btn btn-ghost" type="button" onclick="reinterpolateAllPhotos()" title="Recalculate timestamps for all non-anchor photos">Re-interpolate</button>
+      <label class="timeline-filter">Show <select id="timelineFilter" onchange="setTimelineFilter(this.value)">
+        <option value="all">All</option><option value="interp">Interpolated</option><option value="metadata">Metadata anchors</option><option value="manual">Manual anchors</option>
+      </select></label>
     </div>
     <div class="timeline-scroll">
       <div class="timeline-list" id="timelineList"></div>
@@ -910,6 +917,7 @@ let importConcurrencyMultiplier = 2;
 let incrementalImportEnabled = true;
 let sidebarWidth = 260;
 let zoomLevel = 100;
+let timelineFilter = 'all';
 let viewerObjectURL = null;
 let viewerPhotoId = null;
 let pointerDrag = null;
@@ -1367,6 +1375,7 @@ function buildSessionState() {
     incrementalImportEnabled,
     sidebarWidth,
     zoomLevel,
+    timelineFilter,
     timeline: [...timeline],
     unplaced: [...unplaced],
     photos: cleanPhotos
@@ -1385,6 +1394,7 @@ function restoreSessionState(state) {
   applySidebarWidth();
   zoomLevel = normalizeZoom(state.zoomLevel);
   setZoom(zoomLevel);
+  timelineFilter = ['all', 'interp', 'metadata', 'manual'].includes(state.timelineFilter) ? state.timelineFilter : 'all';
   timeline = Array.isArray(state.timeline) ? state.timeline.map(String) : [];
   unplaced = Array.isArray(state.unplaced) ? state.unplaced.map(String) : [];
 
@@ -2084,6 +2094,7 @@ function refreshTimelineCardDisplay(id, card = null) {
     timeElement.className = `photo-time ${isAnchor ? 'known' : isInterp ? 'interpolated' : ''}`;
     timeElement.textContent = time ? fmtTime(time.time) : 'No timestamp';
   }
+  card.closest('.timeline-entry')?.classList.toggle('filtered-out', timelineFilter !== 'all' && timelineFilterKind(photo) !== timelineFilter);
 
   const actions = card.querySelector('.card-actions');
   if (!actions) return;
@@ -2111,6 +2122,27 @@ function refreshTimelineCards(ids) {
     cards.set(card.dataset.photoId, card);
   });
   ids.forEach(id => refreshTimelineCardDisplay(String(id), cards.get(String(id))));
+}
+
+function timelineFilterKind(photo) {
+  if (!photo.timestamp || photo._interpolated) return 'interp';
+  return photo.timestampSource === 'manual' ? 'manual' : 'metadata';
+}
+
+function applyTimelineFilter() {
+  const select = document.getElementById('timelineFilter');
+  if (select) select.value = timelineFilter;
+  document.querySelectorAll('#timelineList .timeline-entry').forEach(entry => {
+    const id = entry.querySelector('.photo-card[data-photo-id]')?.dataset.photoId;
+    entry.classList.toggle('filtered-out', !!id && timelineFilter !== 'all' && timelineFilterKind(photos[id]) !== timelineFilter);
+  });
+  updateTimelineLineEnds();
+}
+
+function setTimelineFilter(value) {
+  timelineFilter = ['all', 'interp', 'metadata', 'manual'].includes(value) ? value : 'all';
+  applyTimelineFilter();
+  scheduleSessionSave();
 }
 
 function poolCardMarkup(id) {
@@ -2533,7 +2565,7 @@ function getDropTargetAtPoint(x, y) {
 }
 
 function buildDropZones() {
-  const entries = [...document.querySelectorAll('#timelineList .timeline-entry')];
+  const entries = [...document.querySelectorAll('#timelineList .timeline-entry:not(.filtered-out)')];
   const zones = [];
   entries.forEach((entry, index) => {
     const card = entry.querySelector('.photo-card[data-photo-id]');
@@ -2604,8 +2636,8 @@ function onDropTargetDrop(e, insertIdx) {
     if (!entry) {
       insertIdx = Number(target.dataset.dropIndex) || 0;
     } else {
-      const entries = [...document.querySelectorAll('#timelineList .timeline-entry')];
-      insertIdx = entries.indexOf(entry) + (target.classList.contains('line-end-target') ? 1 : 0);
+      const id = entry.querySelector('.photo-card[data-photo-id]')?.dataset.photoId;
+      insertIdx = timeline.indexOf(id) + (target.classList.contains('line-end-target') ? 1 : 0);
     }
   }
   const { source, ids } = dragState;
@@ -3071,6 +3103,7 @@ function render(options = {}) {
   });
 
   list.innerHTML = html;
+  applyTimelineFilter();
   updateTimelineLineEnds();
   document.getElementById('exportBtn').disabled = false;
   animateTimelineCards(oldTimelineRects, options.animateIds || null);
@@ -3078,7 +3111,7 @@ function render(options = {}) {
 }
 
 function updateTimelineLineEnds() {
-  const entries = [...document.querySelectorAll('#timelineList .timeline-entry')];
+  const entries = [...document.querySelectorAll('#timelineList .timeline-entry:not(.filtered-out)')];
   entries.forEach((entry, index) => {
     const next = entries[index + 1];
     const isLineEnd = !next || next.offsetTop > entry.offsetTop;
