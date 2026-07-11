@@ -689,8 +689,10 @@
   .shortcut-list kbd { min-width: 74px; padding: 3px 6px; border: 1px solid #454554; border-radius: 4px; background: #252530; color: var(--color-text-strong); font: inherit; font-size: 12px; text-align: center; }
   .settings-check {
     display: flex;
+    flex-direction: column;
     align-items: center;
     gap: 7px;
+    min-width: 250px;
     margin-top: 12px;
     color: #c8c4be;
     font-size: 12px;
@@ -734,6 +736,7 @@
     top: 8vh; left: 50%;
     transform: translateX(-50%);
     display: flex;
+    flex-direction: column;
     align-items: center;
     gap: 7px;
     padding: 8px 14px;
@@ -744,8 +747,10 @@
     pointer-events: none;
     text-shadow: 0 1px 4px rgba(0,0,0,0.8);
   }
-  .viewer-meta .photo-time { font-size: 17px; }
+  .viewer-meta .photo-time { font-size: 17px; min-height: 22px; }
   .viewer-meta .photo-badge { font-size: 14px; padding: 4px 8px; }
+  .viewer-filename { color: var(--color-text-strong); font-size: 15px; font-weight: 600; }
+  .viewer-tags { min-height: 27px; display: flex; align-items: center; gap: 7px; }
   .viewer-close {
     position: fixed;
     top: 14px; right: 18px;
@@ -973,7 +978,6 @@
   <img class="viewer-image" id="viewerImage" alt="">
   <div class="viewer-fallback" id="viewerFallback" style="display:none"></div>
   <div class="viewer-meta" id="viewerMeta"></div>
-  <div class="viewer-title" id="viewerTitle"></div>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/exifreader@4.16.0/dist/exif-reader.min.js"></script>
@@ -3384,8 +3388,6 @@ function openPhotoViewer(event, id) {
   const overlay = document.getElementById('photoViewer');
   const image = document.getElementById('viewerImage');
   const fallback = document.getElementById('viewerFallback');
-  const title = document.getElementById('viewerTitle');
-  title.textContent = photo.sourcePath || photo.name || '';
   updateViewerMeta(photo);
   image.alt = photo.name || 'Photo';
   image.style.display = 'none';
@@ -3419,7 +3421,7 @@ function updateViewerMeta(photo) {
     : photo._interpolated ? '<span class="photo-badge badge-interp">~</span>' : '';
   const source = sourceBadgeMarkup(photo, isAnchor);
   const timeClass = isAnchor ? 'known' : photo._interpolated ? 'interpolated' : '';
-  meta.innerHTML = `${source}${badge}${display ? `<span class="photo-time ${timeClass}">${fmtTime(display.time)}</span>` : ''}`;
+  meta.innerHTML = `<span class="viewer-filename">${escapeHtml(photo.name || '')}</span><span class="photo-time ${timeClass}">${display ? fmtTime(display.time) : 'No timestamp'}</span><span class="viewer-tags">${source}${badge}</span>`;
 }
 
 function showViewerFallback(photo) {
