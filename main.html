@@ -616,13 +616,17 @@
     border: 0;
     border-radius: 4px;
     background: transparent;
-    color: #e05a5a;
+    color: #c8c4be;
     text-align: left;
     font: inherit;
     font-size: 12px;
     cursor: pointer;
   }
-  .context-menu button:hover { background: #2a1515; }
+  .context-menu button:hover { background: #2a2a36; }
+  .context-menu .menu-warning { color: #e6b450; }
+  .context-menu .menu-warning:hover { background: #302817; }
+  .context-menu .menu-danger { color: #e05a5a; }
+  .context-menu .menu-danger:hover { background: #2a1515; }
 
   .empty-state {
     text-align: center;
@@ -851,11 +855,12 @@
 
 <div class="modal-overlay" id="tsModal" style="display:none">
   <div class="modal">
-    <h2 id="modalTitle">Set Timestamp</h2>
+    <h2 id="modalTitle">Edit Timestamp</h2>
     <p id="modalDesc">Enter the capture time for this photo. It will act as an anchor for interpolation.</p>
     <input type="datetime-local" id="modalInput" min="1970-01-01T00:00:00" max="2100-12-31T23:59:59" step="1">
     <div class="modal-actions">
-      <button class="btn btn-ghost" id="removeManualAnchorBtn" onclick="removeManualAnchors()" style="display:none">Remove Manual Anchor</button>
+      <button class="btn btn-ghost" id="clearTimestampBtn" onclick="clearTimestamps()" style="display:none">Clear Timestamp</button>
+      <button class="btn btn-ghost" id="restoreTimestampBtn" onclick="restoreTimestamps()" style="display:none">Restore Timestamp</button>
       <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
       <button class="btn btn-primary" id="confirmTimestampBtn" onclick="confirmTimestamp()">Set Anchor</button>
     </div>
@@ -863,8 +868,11 @@
 </div>
 
 <div class="context-menu" id="cardContextMenu" style="display:none">
-  <button type="button" onclick="removeSelectedFromTimeline()">Remove</button>
-  <button type="button" onclick="deleteSelectedPhotos()">Remove from organizer</button>
+  <button type="button" onclick="editSelectedTimestamp()">Edit Timestamp</button>
+  <button type="button" id="contextClearTimestamp" onclick="clearSelectedTimestamps()">Clear Timestamp</button>
+  <button type="button" id="contextRestoreTimestamp" onclick="restoreSelectedTimestamps()">Restore Timestamp</button>
+  <button type="button" class="menu-warning" onclick="removeSelectedFromTimeline()">Remove from Timeline</button>
+  <button type="button" class="menu-danger" onclick="deleteSelectedPhotos()">Delete from Editor</button>
 </div>
 
 <div class="modal-overlay" id="summaryModal" style="display:none">
@@ -913,9 +921,9 @@
      role="dialog" aria-modal="true" aria-label="Photo viewer"
   onclick="handleViewerBackgroundClick(event)">
   <div class="viewer-actions">
-    <button class="btn btn-ghost" type="button" onclick="setViewerTimestamp()">Set timestamp</button>
-    <button class="btn btn-ghost" type="button" id="viewerRemoveFromTimeline" onclick="removeViewerFromTimeline()">Remove from timeline</button>
-    <button class="btn btn-ghost" type="button" onclick="deleteViewerPhoto()">Remove from organizer</button>
+    <button class="btn btn-ghost" type="button" onclick="setViewerTimestamp()">Edit Timestamp</button>
+    <button class="btn btn-ghost" type="button" id="viewerRemoveFromTimeline" onclick="removeViewerFromTimeline()">Remove from Timeline</button>
+    <button class="btn btn-ghost" type="button" onclick="deleteViewerPhoto()">Delete from Editor</button>
   </div>
   <button class="viewer-close" type="button" onclick="closePhotoViewer()" aria-label="Close photo viewer">×</button>
   <img class="viewer-image" id="viewerImage" alt="">
@@ -1202,6 +1210,8 @@ function captureEditorState() {
     photoState[id] = {
       timestamp: photo.timestamp ? new Date(photo.timestamp.getTime()) : null,
       timestampSource: photo.timestampSource || null,
+      clearedTimestamp: photo.clearedTimestamp ? new Date(photo.clearedTimestamp.getTime()) : null,
+      clearedTimestampSource: photo.clearedTimestampSource || null,
       preManualTimestamp: photo.preManualTimestamp ? new Date(photo.preManualTimestamp.getTime()) : null,
       preManualTimestampSource: photo.preManualTimestampSource || null,
       inTimeline: !!photo.inTimeline,
@@ -1253,6 +1263,8 @@ function restoreEditorState(state) {
       return !before || !after
         || !datesEqual(before.timestamp, after.timestamp)
         || before.timestampSource !== after.timestampSource
+        || !datesEqual(before.clearedTimestamp, after.clearedTimestamp)
+        || before.clearedTimestampSource !== after.clearedTimestampSource
         || !datesEqual(before.preManualTimestamp, after.preManualTimestamp)
         || before.preManualTimestampSource !== after.preManualTimestampSource
         || !datesEqual(before._interpolated, after._interpolated);
@@ -1382,6 +1394,8 @@ function buildSessionState() {
       camera: p.camera,
       timestamp: dateToLocalStamp(p.timestamp),
       timestampSource: p.timestampSource || null,
+      clearedTimestamp: dateToLocalStamp(p.clearedTimestamp),
+      clearedTimestampSource: p.clearedTimestampSource || null,
       preManualTimestamp: dateToLocalStamp(p.preManualTimestamp),
       preManualTimestampSource: p.preManualTimestampSource || null,
       modifiedTime: p.modifiedTime || 0,
@@ -1442,6 +1456,8 @@ async function restoreSessionState(state, onProgress = null) {
       camera: p.camera || detectCamera(p.name || ''),
       timestamp: localStampToDate(p.timestamp),
       timestampSource: p.timestampSource || (p.timestamp ? 'exif' : null),
+      clearedTimestamp: localStampToDate(p.clearedTimestamp),
+      clearedTimestampSource: p.clearedTimestampSource || null,
       preManualTimestamp: localStampToDate(p.preManualTimestamp),
       preManualTimestampSource: p.preManualTimestampSource || null,
       modifiedTime: Number(p.modifiedTime) || 0,
@@ -2059,6 +2075,12 @@ function openCardContextMenu(e, id, source) {
   }
 
   const menu = document.getElementById('cardContextMenu');
+  const ids = selectedIdsInSource('timeline');
+  document.getElementById('contextClearTimestamp').style.display = ids.some(id => photos[id]?.timestamp) ? '' : 'none';
+  document.getElementById('contextRestoreTimestamp').style.display = ids.some(id => {
+    const photo = photos[id];
+    return photo?.clearedTimestamp && photo.clearedTimestampSource !== 'manual';
+  }) ? '' : 'none';
   menu.style.display = 'block';
   menu.style.left = `${Math.min(e.clientX, window.innerWidth - menu.offsetWidth - 8)}px`;
   menu.style.top = `${Math.min(e.clientY, window.innerHeight - menu.offsetHeight - 8)}px`;
@@ -2091,6 +2113,24 @@ function deleteSelectedPhotos() {
   hideCardContextMenu();
   const ids = selectedIdsInSource('timeline');
   deletePhotos(ids);
+}
+
+function editSelectedTimestamp() {
+  hideCardContextMenu();
+  const id = selectedIdsInSource('timeline')[0];
+  if (id) openTimestampModal(id);
+}
+
+function clearSelectedTimestamps() {
+  hideCardContextMenu();
+  modalTargets = selectedIdsInSource('timeline');
+  clearTimestamps(false);
+}
+
+function restoreSelectedTimestamps() {
+  hideCardContextMenu();
+  modalTargets = selectedIdsInSource('timeline');
+  restoreTimestamps();
 }
 
 function deletePhotos(ids) {
@@ -2196,7 +2236,7 @@ function poolCardMarkup(id) {
   const selected = selectedIds.has(String(id)) ? ' selected' : '';
   return `<div class="pool-card${selected}" data-photo-id="${id}"
     title="${photo.name.replace(/"/g,'&quot;')}">
-    <div class="pool-thumb">${photo.thumbURL ? `<img src="${photo.thumbURL}" loading="lazy" decoding="async" alt="">` : '🖼'}<button type="button" class="view-btn" data-action="view" title="Open fullscreen" aria-label="Open ${escapeHtml(photo.name)} fullscreen">⛶</button><button type="button" class="pool-delete-btn" data-action="delete" title="Remove from organizer" aria-label="Remove ${escapeHtml(photo.name)} from organizer">🗑</button></div>
+    <div class="pool-thumb">${photo.thumbURL ? `<img src="${photo.thumbURL}" loading="lazy" decoding="async" alt="">` : '🖼'}<button type="button" class="view-btn" data-action="view" title="Open fullscreen" aria-label="Open ${escapeHtml(photo.name)} fullscreen">⛶</button><button type="button" class="pool-delete-btn" data-action="delete" title="Delete from Editor" aria-label="Delete ${escapeHtml(photo.name)} from Editor">🗑</button></div>
     <div class="pool-name">${photo.name}</div>
   </div>`;
 }
@@ -2242,8 +2282,8 @@ function timelineEntryMarkup(id) {
         ${sourceBadge}
         ${badge}
         <div style="flex:1"></div>
-        <button class="remove-btn" data-action="remove" title="Remove">×</button>
-        <button class="btn btn-ghost" data-action="edit-timestamp" style="font-size:10px;padding:2px 5px;flex-shrink:0" title="Set timestamp">✎</button>
+        <button class="remove-btn" data-action="remove" title="Remove from Timeline" aria-label="Remove from Timeline">×</button>
+        <button class="btn btn-ghost" data-action="edit-timestamp" style="font-size:10px;padding:2px 5px;flex-shrink:0" title="Edit Timestamp">✎</button>
       </div>
     </div>
   </div>${mkDropTarget(0, 'line-end-target')}</div>`;
@@ -2742,16 +2782,23 @@ function openTimestampModal(id) {
   const p = photos[id];
   const multiple = modalTargets.length > 1;
   document.getElementById('modalTitle').textContent = multiple
-    ? `Set timestamp — ${modalTargets.length} photos`
-    : `Set timestamp — ${p.name}`;
+    ? `Edit Timestamp — ${modalTargets.length} photos`
+    : `Edit Timestamp — ${p.name}`;
   document.getElementById('modalDesc').textContent = multiple
     ? `The entered time will be applied to all selected photos.`
     : `Enter the exact capture time. This photo will become an anchor for interpolation.`;
   document.getElementById('confirmTimestampBtn').textContent = multiple ? 'Set Timestamps' : 'Set Anchor';
-  const manualCount = modalTargets.filter(targetId => photos[targetId]?.timestampSource === 'manual').length;
-  const removeButton = document.getElementById('removeManualAnchorBtn');
-  removeButton.style.display = manualCount ? 'inline-block' : 'none';
-  removeButton.textContent = manualCount > 1 ? 'Remove Manual Anchors' : 'Remove Manual Anchor';
+  const clearableCount = modalTargets.filter(targetId => photos[targetId]?.timestamp).length;
+  const restorableCount = modalTargets.filter(targetId => {
+    const photo = photos[targetId];
+    return photo?.clearedTimestamp && photo.clearedTimestampSource !== 'manual';
+  }).length;
+  const clearButton = document.getElementById('clearTimestampBtn');
+  const restoreButton = document.getElementById('restoreTimestampBtn');
+  clearButton.style.display = clearableCount ? 'inline-block' : 'none';
+  clearButton.textContent = clearableCount > 1 ? 'Clear Timestamps' : 'Clear Timestamp';
+  restoreButton.style.display = restorableCount ? 'inline-block' : 'none';
+  restoreButton.textContent = restorableCount > 1 ? 'Restore Timestamps' : 'Restore Timestamp';
   const existing = p.timestamp;
   if (existing) {
     const local = new Date(existing.getTime() - existing.getTimezoneOffset() * 60000);
@@ -2766,7 +2813,8 @@ function closeModal() {
   document.getElementById('tsModal').style.display = 'none';
   modalTargets = [];
   document.getElementById('confirmTimestampBtn').textContent = 'Set Anchor';
-  document.getElementById('removeManualAnchorBtn').style.display = 'none';
+  document.getElementById('clearTimestampBtn').style.display = 'none';
+  document.getElementById('restoreTimestampBtn').style.display = 'none';
 }
 
 function refreshAfterTimestampChange(changedTimelineIds, changedPoolPhoto) {
@@ -2796,6 +2844,8 @@ function confirmTimestamp() {
     }
     photo.timestamp = new Date(timestamp.getTime());
     photo.timestampSource = 'manual';
+    photo.clearedTimestamp = null;
+    photo.clearedTimestampSource = null;
     photo._interpolated = null;
     if (photo.inTimeline) changedTimelineIds.push(id);
     else changedPoolPhoto = true;
@@ -2804,18 +2854,44 @@ function confirmTimestamp() {
   closeModal();
 }
 
-function removeManualAnchors() {
-  const manualIds = modalTargets.filter(id => photos[id]?.timestampSource === 'manual');
-  if (!manualIds.length) { closeModal(); return; }
+function clearTimestamps(reopen = true) {
+  const ids = modalTargets.filter(id => photos[id]?.timestamp);
+  if (!ids.length) { closeModal(); return; }
   pushHistory();
   const changedTimelineIds = [];
   let changedPoolPhoto = false;
-  for (const id of manualIds) {
+  for (const id of ids) {
     const photo = photos[id];
-    photo.timestamp = photo.preManualTimestamp ? new Date(photo.preManualTimestamp.getTime()) : null;
-    photo.timestampSource = photo.preManualTimestampSource || null;
+    photo.clearedTimestamp = photo.timestampSource === 'manual' ? null : new Date(photo.timestamp.getTime());
+    photo.clearedTimestampSource = photo.timestampSource === 'manual' ? null : photo.timestampSource;
+    photo.timestamp = null;
+    photo.timestampSource = null;
     photo.preManualTimestamp = null;
     photo.preManualTimestampSource = null;
+    photo._interpolated = null;
+    if (photo.inTimeline) changedTimelineIds.push(id);
+    else changedPoolPhoto = true;
+  }
+  refreshAfterTimestampChange(changedTimelineIds, changedPoolPhoto);
+  if (reopen) openTimestampModal(ids[0]);
+  else closeModal();
+}
+
+function restoreTimestamps() {
+  const ids = modalTargets.filter(id => {
+    const photo = photos[id];
+    return photo?.clearedTimestamp && photo.clearedTimestampSource !== 'manual';
+  });
+  if (!ids.length) { closeModal(); return; }
+  pushHistory();
+  const changedTimelineIds = [];
+  let changedPoolPhoto = false;
+  for (const id of ids) {
+    const photo = photos[id];
+    photo.timestamp = new Date(photo.clearedTimestamp.getTime());
+    photo.timestampSource = photo.clearedTimestampSource;
+    photo.clearedTimestamp = null;
+    photo.clearedTimestampSource = null;
     photo._interpolated = null;
     if (photo.inTimeline) changedTimelineIds.push(id);
     else changedPoolPhoto = true;
@@ -3163,8 +3239,8 @@ function render(options = {}) {
           ${sourceBadge}
           ${badge}
           <div style="flex:1"></div>
-          <button class="remove-btn" data-action="remove" title="Remove">×</button>
-          <button class="btn btn-ghost" data-action="edit-timestamp" style="font-size:10px;padding:2px 5px;flex-shrink:0" title="Set timestamp">✎</button>
+          <button class="remove-btn" data-action="remove" title="Remove from Timeline" aria-label="Remove from Timeline">×</button>
+          <button class="btn btn-ghost" data-action="edit-timestamp" style="font-size:10px;padding:2px 5px;flex-shrink:0" title="Edit Timestamp">✎</button>
         </div>
       </div>
     </div>${mkDropTarget(i + 1, 'line-end-target')}</div>`;

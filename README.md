@@ -9,7 +9,7 @@ It is especially useful for large photo batches where a camera clock was wrong, 
 - Reads EXIF/XMP timestamps from image files.
 - Places photos with known timestamps into a chronological timeline.
 - Keeps photos without usable timestamps in an unplaced pool.
-- Lets you manually assign or remove anchor timestamps.
+- Lets you manually assign or clear anchor timestamps, and restore cleared metadata timestamps.
 - Interpolates timestamps for unmarked photos between anchors.
 - Supports multi-selection, keyboard movement, drag-and-drop, undo/redo, and a full-screen viewer.
 - Exports a CSV without modifying the original image files.

@@ -18,6 +18,7 @@ Each photo record can contain:
 | --- | --- |
 | `id`, `name`, `camera`, `modifiedTime` | Stable file metadata used by the UI and sorting. |
 | `timestamp`, `timestampSource` | A real anchor time and where it came from: EXIF/XMP/manual. |
+| `clearedTimestamp`, `clearedTimestampSource` | A cleared metadata anchor retained only so the user can restore it. |
 | `_interpolated` | Calculated time for a non-anchor timeline photo. Never persisted as an input. |
 | `thumbURL` | Small JPEG data URL saved in the session for persistent previews. |
 | `sourceFile` | Runtime-only lazy `File` reference for full-resolution viewing. It is intentionally never persisted. |
