@@ -1283,7 +1283,12 @@ function restoreEditorState(state) {
         || before.preManualTimestampSource !== after.preManualTimestampSource
         || !datesEqual(before._interpolated, after._interpolated);
     }));
-    changedIds.forEach(id => refreshTimelineCardDisplay(id));
+    if (shouldVirtualizeTimeline() && timelineFilter !== 'all') {
+      invalidateVirtualTimeline();
+      renderVirtualTimeline();
+    } else {
+      changedIds.forEach(id => refreshTimelineCardDisplay(id));
+    }
     updateMemoryStatus();
     updateStats();
     updateHistoryButtons();
@@ -3019,7 +3024,14 @@ function refreshAfterTimestampChange(changedTimelineIds, changedPoolPhoto) {
   interpolateAll();
   // A changed anchor can alter any interpolation, but card structure remains
   // stable, so update the existing timeline cards instead of rebuilding them.
-  if (changedTimelineIds.length) refreshTimelineCards(timeline);
+  if (changedTimelineIds.length) {
+    if (shouldVirtualizeTimeline() && timelineFilter !== 'all') {
+      invalidateVirtualTimeline();
+      renderVirtualTimeline();
+    } else {
+      refreshTimelineCards(timeline);
+    }
+  }
   if (changedPoolPhoto && unplacedSortMode === 'capture') reconcilePoolCards();
   updateMemoryStatus();
   updateHistoryButtons();
@@ -3460,7 +3472,12 @@ function playCardFlights(flights, container) {
 // Prefer the incremental selection, reorder, transfer, and history paths for
 // frequent interactions. This function is for startup and broad state changes.
 function shouldVirtualizeTimeline() {
-  return timeline.length > VIRTUAL_TIMELINE_THRESHOLD && timelineFilter === 'all';
+  return timeline.length > VIRTUAL_TIMELINE_THRESHOLD;
+}
+
+function timelineDisplayIds() {
+  if (timelineFilter === 'all') return timeline;
+  return timeline.filter(id => timelineFilterKind(photos[id]) === timelineFilter);
 }
 
 function invalidateVirtualTimeline() {
@@ -3478,6 +3495,15 @@ function virtualTimelineLayout() {
 function renderVirtualTimeline() {
   if (!shouldVirtualizeTimeline()) return;
   const { scroll, columns, entryWidth, rowHeight } = virtualTimelineLayout();
+  const displayIds = timelineDisplayIds();
+  const list = document.getElementById('timelineList');
+  if (!displayIds.length) {
+    virtualTimelineKey = `empty:${timelineFilter}`;
+    list.classList.add('virtualized');
+    list.style.height = '';
+    list.innerHTML = '<div class="empty-state"><p>No photos match this filter.</p></div>';
+    return;
+  }
   const visibleFirstRow = Math.floor(Math.max(0, scroll.scrollTop - 16) / rowHeight);
   const firstRow = Math.max(0,
     Math.floor(visibleFirstRow / VIRTUAL_TIMELINE_RENDER_STRIDE_ROWS) * VIRTUAL_TIMELINE_RENDER_STRIDE_ROWS
@@ -3485,18 +3511,17 @@ function renderVirtualTimeline() {
   );
   const lastRow = firstRow + Math.ceil(scroll.clientHeight / rowHeight) + VIRTUAL_TIMELINE_OVERSCAN_ROWS * 2;
   const start = firstRow * columns;
-  const end = Math.min(timeline.length, lastRow * columns);
-  const key = `${start}:${end}:${columns}:${rowHeight}:${timeline.length}`;
+  const end = Math.min(displayIds.length, lastRow * columns);
+  const key = `${start}:${end}:${columns}:${rowHeight}:${displayIds.length}:${timelineFilter}`;
   if (key === virtualTimelineKey) return;
   virtualTimelineKey = key;
-  const list = document.getElementById('timelineList');
   list.classList.add('virtualized');
-  list.style.height = `${Math.ceil(timeline.length / columns) * rowHeight}px`;
-  list.innerHTML = timeline.slice(start, end).map((id, offset) => {
+  list.style.height = `${Math.ceil(displayIds.length / columns) * rowHeight}px`;
+  list.innerHTML = displayIds.slice(start, end).map((id, offset) => {
     const index = start + offset;
     const left = (index % columns) * (entryWidth + 4);
     const top = Math.floor(index / columns) * rowHeight;
-    return timelineEntryMarkup(id, index, ` style="left:${left}px;top:${top}px"`);
+    return timelineEntryMarkup(id, timeline.indexOf(id), ` style="left:${left}px;top:${top}px"`);
   }).join('');
 }
 
