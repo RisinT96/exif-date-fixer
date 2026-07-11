@@ -7,7 +7,7 @@
 - [x] Test selecting, dragging, reordering, and scrolling with approximately 1,000 photos.
 - [x] Record interaction behavior and approximate tab memory usage.
 - [x] Identify the current bottlenecks: undo/redo, pool↔timeline moves, and separator feedback.
-- [ ] Measure loading and behavior at 5,000 photos.
+- [x] Measure loading and behavior at 5,000 photos.
 
 ### 2. Reduce unnecessary work during rendering
 
@@ -37,10 +37,10 @@
 
 ### 6. Virtualize the timeline
 
-- [ ] Move the timeline toward a predictable fixed-size grid or row layout.
-- [ ] Calculate visible timeline rows from scroll position and viewport size.
-- [ ] Render only visible rows plus overscan while preserving drop-target behavior.
-- [ ] Ensure drag-and-drop, selection, keyboard movement, and timestamp editing work across virtualized rows.
+- [x] Move the timeline toward a predictable fixed-size grid or row layout.
+- [x] Calculate visible timeline rows from scroll position and viewport size.
+- [x] Render only visible rows plus overscan while preserving drop-target behavior.
+- [x] Ensure drag-and-drop, selection, keyboard movement, and timestamp editing work across virtualized rows.
 
 ### 7. Optimize data processing
 
@@ -62,4 +62,4 @@
 - [x] Update timestamp edits incrementally instead of rebuilding every card.
 - [x] Replace separator hover feedback with a stable pointer-driven insertion indicator and expanded separator zones.
 - [x] Delegate card and pointer-drag events from the list containers instead of embedding handlers on every card.
-- [x] Re-test large-collection interactions: 1,500 timeline photos and 700 unplaced photos remained responsive.
+- [x] Re-test large-collection interactions: 4,000 timeline photos and 1,500 unplaced photos remained responsive.
