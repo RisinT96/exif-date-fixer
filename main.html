@@ -821,14 +821,9 @@
 <div class="main">
   <div class="sidebar">
     <div class="sidebar-section">
-      <label>Load Photos</label>
-      <div class="drop-zone" id="dropZone" onclick="document.getElementById('fileInput').click()"
-           ondragover="handleDragOver(event)" ondragleave="handleDragLeave(event)" ondrop="handleFileDrop(event)">
-        <div>📁 Click or drop photos here</div>
-        <div style="font-size:11px;margin-top:4px;">JPG, PNG, HEIC, etc.</div>
-      </div>
-      <button class="btn btn-ghost" type="button" style="width:100%;margin-top:8px" onclick="document.getElementById('folderInput').click()">Select Folder</button>
-      <input type="file" id="fileInput" multiple accept="image/*" style="display:none">
+      <label>Load from Folder</label>
+      <button class="btn btn-ghost" type="button" style="width:100%;margin-top:8px" onclick="choosePhotoFolder('import')">Load Folder</button>
+      <button class="btn btn-ghost" type="button" style="width:100%;margin-top:8px" onclick="choosePhotoFolder('associate')">Associate Existing Photos</button>
       <input type="file" id="folderInput" webkitdirectory directory multiple style="display:none">
       <input type="file" id="sessionFileInput" accept="application/json,.json" style="display:none">
       <div class="processing-status" id="processingStatus" aria-live="polite">
@@ -1926,7 +1921,13 @@ async function createImportWorkers(count) {
 
 // New selections join one serial queue. This prevents concurrent imports from
 // overwriting shared progress state or competing to update the same DOM.
-function handleFiles(files) {
+function choosePhotoFolder(mode) {
+  const input = document.getElementById('folderInput');
+  input.dataset.mode = mode;
+  input.click();
+}
+
+function handleFiles(files, associateOnly = false) {
   const total = countSupportedPhotoFiles(files);
   if (!total) return Promise.resolve();
 
@@ -1938,7 +1939,14 @@ function handleFiles(files) {
   updateProcessingProgress();
 
   const job = importQueue
-    .then(() => processFiles(files))
+    .then(() => processFiles(files, associateOnly))
+    .then(unmatched => {
+      if (associateOnly) showActionMessage(
+        unmatched ? `Associated folder files. ${unmatched} unmatched file${unmatched === 1 ? '' : 's'} ignored.`
+          : 'Associated all matching folder files.'
+      );
+      return unmatched;
+    })
     .catch(error => {
       processingState?.errors.push(`Import error: ${error.message}`);
     })
@@ -1953,7 +1961,7 @@ function handleFiles(files) {
 
 // Files are processed serially. Persistent thumbnails are small; source files
 // stay lazy and are read only when opened in the full-screen viewer.
-async function processFiles(files) {
+async function processFiles(files, associateOnly = false) {
   const existingPhotosByPath = new Map();
   const existingPhotosByName = new Map();
   Object.values(photos).forEach(photo => {
@@ -1965,6 +1973,7 @@ async function processFiles(files) {
   let renderedTimeline = [...timeline];
   let pendingTimelineIds = [];
   let pendingUnplacedIds = [];
+  let unmatchedCount = 0;
   let importRenderTimer = null;
   const renderIncrementally = incrementalImportEnabled;
 
@@ -2006,7 +2015,7 @@ async function processFiles(files) {
     }
   };
 
-  pushHistory();
+  if (!associateOnly) pushHistory();
 
   let nextFileIndex = 0;
   const sourcePathWork = new Map();
@@ -2016,7 +2025,7 @@ async function processFiles(files) {
   const processOneFile = async (worker, file) => {
     const sourcePath = file.webkitRelativePath || file.name;
     const exactPathPhoto = existingPhotosByPath.get(sourcePath);
-    let result = await worker.run(file, !exactPathPhoto);
+    let result = await worker.run(file, !exactPathPhoto && !associateOnly);
     let sourceIdentity = { sourceSize: result.sourceSize, sourceFingerprint: result.sourceFingerprint };
     const candidates = exactPathPhoto ? [exactPathPhoto] : (existingPhotosByName.get(file.name) || []);
     const existingPhoto = candidates.find(photo => sourceMatchesPhoto(photo, file, sourceIdentity));
@@ -2026,6 +2035,10 @@ async function processFiles(files) {
       existingPhoto.sourceSize = sourceIdentity.sourceSize;
       existingPhoto.sourceFingerprint ||= sourceIdentity.sourceFingerprint;
       existingPhotosByPath.set(sourcePath, existingPhoto);
+      return;
+    }
+    if (associateOnly) {
+      unmatchedCount++;
       return;
     }
     if (!result.thumbURL) {
@@ -2096,14 +2109,7 @@ async function processFiles(files) {
   updateHistoryButtons();
   document.getElementById('exportBtn').disabled = !timeline.length;
   scheduleSessionSave();
-}
-
-function handleDragOver(e) { e.preventDefault(); e.currentTarget.classList.add('dragover'); }
-function handleDragLeave(e) { e.currentTarget.classList.remove('dragover'); }
-function handleFileDrop(e) {
-  e.preventDefault();
-  e.currentTarget.classList.remove('dragover');
-  handleFiles(e.dataTransfer.files);
+  return unmatchedCount;
 }
 
 // ── TIMELINE INTERPOLATION ─────────────────────────────────────────────────
@@ -4210,12 +4216,8 @@ document.getElementById('unplacedSort').addEventListener('change', function() {
   scheduleSessionSave();
   render();
 });
-document.getElementById('fileInput').addEventListener('change', async function() {
-  await handleFiles(this.files);
-  this.value = ''; // release the picker references after processing the batch
-});
 document.getElementById('folderInput').addEventListener('change', async function() {
-  await handleFiles(this.files);
+  await handleFiles(this.files, this.dataset.mode === 'associate');
   this.value = '';
 });
 document.getElementById('sessionFileInput').addEventListener('change', async function() {
