@@ -2530,7 +2530,9 @@ function timelineFilterKind(photo) {
 }
 
 function matchesPhotoSearch(id) {
-  return !timelineSearch ? true : !!timelineSearchRegex && timelineSearchRegex.test(photos[id]?.name || '');
+  const photo = photos[id];
+  return !timelineSearch ? true : !!timelineSearchRegex
+    && timelineSearchRegex.test(photo?.sourcePath || photo?.name || '');
 }
 
 function timelineDisplayIdsFor(ids) {
