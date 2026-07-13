@@ -441,6 +441,7 @@
   }
   .photo-card:hover { border-color: #3a3a50; background: #22222e; }
   .photo-card.dragging { opacity: 0.4; cursor: grabbing; }
+  .photo-card.cut-ghost, .pool-card.cut-ghost { opacity: 0.42; border-style: dashed; filter: saturate(0.55); }
   .photo-card.selected { border-color: #8a90f0; box-shadow: 0 0 0 2px rgba(91,106,240,0.45); }
   .photo-card.anchored { border-top: 3px solid var(--color-anchor); border-bottom: 3px solid var(--color-anchor); }
   .photo-card.interpolated { border-top: 3px solid var(--color-interpolated); border-bottom: 3px solid var(--color-interpolated); }
@@ -903,6 +904,8 @@
   <button type="button" id="contextRestoreTimestamp" onclick="restoreSelectedTimestamps()">Restore Timestamp</button>
   <button type="button" class="menu-warning" onclick="removeSelectedFromTimeline()">Remove from Timeline</button>
   <button type="button" class="menu-danger" onclick="deleteSelectedPhotos()">Delete from Editor</button>
+  <button type="button" id="contextCut" onclick="cutSelectedPhotos()">Cut</button>
+  <button type="button" id="contextPaste" onclick="pasteCutPhotos(true)">Paste</button>
 </div>
 
 <div class="modal-overlay" id="summaryModal" style="display:none">
@@ -954,6 +957,9 @@
       <kbd>/</kbd><span>Focus photo search</span>
       <kbd>?</kbd><span>Open this help</span>
       <kbd>Ctrl/Cmd + A</kbd><span>Select all visible photos</span>
+      <kbd>Ctrl/Cmd + X</kbd><span>Cut selected timeline photos</span>
+      <kbd>Ctrl/Cmd + V</kbd><span>Paste after the selected photo</span>
+      <kbd>Ctrl/Cmd + Shift + V</kbd><span>Paste before the selected photo</span>
       <kbd>Shift-click</kbd><span>Select a range of visible photos</span>
       <kbd>Ctrl/Cmd-click</kbd><span>Toggle a photo in the selection</span>
       <kbd>← / →</kbd><span>Move selected timeline photos</span>
@@ -995,6 +1001,9 @@ let dragState = null;
 let modalTargets = [];
 let selectedIds = new Set();
 let selectionAnchor = null;
+let cutIds = new Set();
+let cutSource = null;
+let contextPasteInsertIdx = null;
 let unplacedSortMode = 'name';
 const collapsedPoolFolders = new Set();
 let importConcurrencyMultiplier = 2;
@@ -1481,7 +1490,20 @@ function pushHistory() {
 function updateSelectionUI() {
   document.querySelectorAll('#timelineList .photo-card[data-photo-id], #poolGrid .pool-card[data-photo-id]')
     .forEach(card => card.classList.toggle('selected', selectedIds.has(card.dataset.photoId)));
+  updateCutVisuals();
   scheduleSessionSave();
+}
+
+function updateCutVisuals() {
+  document.querySelectorAll('[data-photo-id]').forEach(card => {
+    card.classList.toggle('cut-ghost', cutIds.has(card.dataset.photoId));
+  });
+}
+
+function showActionMessage(message) {
+  setSessionStatus(message, 'warn');
+  clearTimeout(showActionMessage.timer);
+  showActionMessage.timer = setTimeout(() => setSessionStatus('Ready', 'good'), 2200);
 }
 
 function detectCamera(name) {
@@ -2260,6 +2282,7 @@ function selectedIdsInSource(source) {
 
 function hideCardContextMenu() {
   document.getElementById('cardContextMenu').style.display = 'none';
+  contextPasteInsertIdx = null;
 }
 
 function openCardContextMenu(e, id, source) {
@@ -2273,6 +2296,10 @@ function openCardContextMenu(e, id, source) {
     updateSelectionUI();
   }
 
+  const rect = document.querySelector(`#timelineList .photo-card[data-photo-id="${id}"]`)?.getBoundingClientRect();
+  contextPasteInsertIdx = rect && e.clientX >= rect.left + rect.width / 2
+    ? timeline.indexOf(id) + 1 : timeline.indexOf(id);
+
   const menu = document.getElementById('cardContextMenu');
   const ids = selectedIdsInSource('timeline');
   document.getElementById('contextClearTimestamp').style.display = ids.some(id => photos[id]?.timestamp) ? '' : 'none';
@@ -2280,9 +2307,69 @@ function openCardContextMenu(e, id, source) {
     const photo = photos[id];
     return photo?.clearedTimestamp && photo.clearedTimestampSource !== 'manual';
   }) ? '' : 'none';
+  document.getElementById('contextPaste').style.display = cutIds.size ? '' : 'none';
+  document.getElementById('contextCut').style.display = ids.length ? '' : 'none';
   menu.style.display = 'block';
   menu.style.left = `${Math.min(e.clientX, window.innerWidth - menu.offsetWidth - 8)}px`;
   menu.style.top = `${Math.min(e.clientY, window.innerHeight - menu.offsetHeight - 8)}px`;
+}
+
+function cutSelectedPhotos() {
+  hideCardContextMenu();
+  const source = selectionAnchor?.source;
+  const ids = source ? selectedIdsInSource(source) : [];
+  if (!ids.length) return showActionMessage('Select photos to cut.');
+  cutIds = new Set(ids);
+  cutSource = source;
+  updateCutVisuals();
+  showActionMessage(`${ids.length} photo${ids.length === 1 ? '' : 's'} cut — choose a destination and paste.`);
+}
+
+function pasteCutPhotos(fromContext = false, before = false) {
+  const requestedInsertIdx = fromContext ? contextPasteInsertIdx : null;
+  hideCardContextMenu();
+  const ids = [...cutIds].filter(id => photos[id] && (cutSource === 'pool' ? unplaced.includes(id) : timeline.includes(id)));
+  if (!ids.length) return showActionMessage('Nothing to paste.');
+
+  let insertIdx = requestedInsertIdx;
+  if (insertIdx == null) {
+    const selected = selectedIdsInSource('timeline');
+    if (selected.length !== 1) {
+      return showActionMessage('Select exactly one timeline photo as the paste destination.');
+    }
+    insertIdx = timeline.indexOf(selected[0]) + (before ? 0 : 1);
+  }
+
+  const previousTimeline = [...timeline];
+  const selected = new Set(ids);
+  if (cutSource === 'pool') {
+    pushHistory();
+    unplaced = unplaced.filter(id => !selected.has(id));
+    ids.forEach(id => { photos[id].inTimeline = true; });
+    timeline.splice(Math.max(0, Math.min(timeline.length, insertIdx)), 0, ...ids);
+    interpolateAll();
+    cutIds.clear();
+    cutSource = null;
+    selectedIds = new Set(ids);
+    selectionAnchor = { source: 'timeline', id: ids[0] };
+    updateSelectionUI();
+    removePoolCards(ids);
+    insertTimelineEntries(ids);
+    finalizeIncrementalTransfer(getTransferAffectedIds(previousTimeline, timeline, selected), selected);
+    return;
+  }
+  const removedBeforeDrop = timeline.slice(0, insertIdx).filter(id => selected.has(id)).length;
+  pushHistory();
+  timeline = timeline.filter(id => !selected.has(id));
+  const newIdx = Math.max(0, Math.min(timeline.length, insertIdx - removedBeforeDrop));
+  timeline.splice(newIdx, 0, ...ids);
+  interpolateAll();
+  selectedIds = new Set(ids);
+  selectionAnchor = { source: 'timeline', id: ids[0] };
+  cutIds.clear();
+  cutSource = null;
+  updateSelectionUI();
+  reorderTimelineDom(getAffectedTimelineIds(previousTimeline, timeline, selected), selected);
 }
 
 function removeSelectedFromTimeline() {
@@ -2516,7 +2603,8 @@ function setTimelineFilter(value) {
 function poolCardMarkup(id) {
   const photo = photos[id];
   const selected = selectedIds.has(String(id)) ? ' selected' : '';
-  return `<div class="pool-card${selected}" data-photo-id="${id}"
+  const cut = cutIds.has(String(id)) ? ' cut-ghost' : '';
+  return `<div class="pool-card${selected}${cut}" data-photo-id="${id}"
     title="${photo.name.replace(/"/g,'&quot;')}">
     <div class="pool-thumb">${photo.thumbURL ? `<img src="${photo.thumbURL}" loading="lazy" decoding="async" alt="">` : '🖼'}<button type="button" class="view-btn" data-action="view" title="Open fullscreen" aria-label="Open ${escapeHtml(photo.name)} fullscreen">⛶</button><button type="button" class="pool-delete-btn" data-action="delete" title="Delete from Editor" aria-label="Delete ${escapeHtml(photo.name)} from Editor">🗑</button></div>
     <div class="pool-name">${photo.name}</div>
@@ -3882,6 +3970,7 @@ function renderVirtualTimeline() {
     if (!activeIds.has(id)) entry.remove();
   });
   list.appendChild(additions);
+  updateCutVisuals();
   recordPerformance('Virtual timeline render', renderStart);
 }
 
@@ -3910,6 +3999,7 @@ function rerenderVirtualTimelineAfterChange() {
 function render(options = {}) {
   const start = performance.now();
   renderNow(options);
+  updateCutVisuals();
   recordPerformance('Render', start);
 }
 
@@ -3987,7 +4077,8 @@ function renderNow(options = {}) {
       ? `<span class="photo-badge badge-anchor">ANCHOR</span>`
       : isInterp ? `<span class="photo-badge badge-interp">~</span>` : '';
     const sourceBadge = sourceBadgeMarkup(p, isAnchor);
-    html += `<div class="timeline-entry">${mkDropTarget(i)}<div class="photo-card ${cardClass}${selectedClass}" data-photo-id="${id}">
+    const cutClass = cutIds.has(String(id)) ? ' cut-ghost' : '';
+    html += `<div class="timeline-entry">${mkDropTarget(i)}<div class="photo-card ${cardClass}${selectedClass}${cutClass}" data-photo-id="${id}">
       <div class="photo-thumb">${p.thumbURL ? `<img src="${p.thumbURL}" loading="lazy" decoding="async" alt="">` : '🖼'}<button type="button" class="view-btn" data-action="view" title="Open fullscreen" aria-label="Open ${escapeHtml(p.name)} fullscreen">⛶</button></div>
       <div class="photo-footer">
         <div class="photo-name">${p.name}</div>
@@ -4068,6 +4159,18 @@ document.addEventListener('keydown', e => {
     }
     hideCardContextMenu();
     clearSelection();
+  }
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'x') {
+    if (e.target.closest('input, textarea, [contenteditable="true"]')) return;
+    e.preventDefault();
+    cutSelectedPhotos();
+    return;
+  }
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'v') {
+    if (e.target.closest('input, textarea, [contenteditable="true"]')) return;
+    e.preventDefault();
+    pasteCutPhotos(false, e.shiftKey);
+    return;
   }
   if (e.key === 'Delete' || e.key === 'Backspace') {
     if (e.target.closest('input, textarea, [contenteditable="true"]')) return;
