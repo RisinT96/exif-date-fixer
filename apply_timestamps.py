@@ -16,10 +16,14 @@ EXIF_TIME_FORMAT = "%Y:%m:%d %H:%M:%S"
 console = Console()
 
 
-def print_status(status: str, path: str, message: str, style: str, message_style: str | None = None) -> None:
+def print_status(status: str, path: str, message: str, style: str,
+                 message_style: str | None = None, message_first: bool = False) -> None:
     line = Text(f"[{status:<7}] ", style=style)
+    if message_first:
+        line.append(f"{message} ", style=message_style or style)
     line.append(f"[{path}] ", style="dim")
-    line.append(message, style=message_style or style)
+    if not message_first:
+        line.append(message, style=message_style or style)
     console.print(line, highlight=False)
 
 
@@ -146,11 +150,11 @@ def main(csv_path: Path, photos_root: Path, dry_run: bool, accept_auto_detected:
                     original_label = f"{original_time}{original_offset}"
                     if original_time == updated_time and all(offset == (updated_offset or "") for offset in original_offsets):
                         same += 1
-                        print_status("same", str(path), f"[{original_label:25}] -> [{updated_label}]", "cyan", "green")
+                        print_status("same", str(path), f"[{original_label:25}] -> [{updated_label}]", "cyan", "green", True)
                     else:
                         if not dry_run:
                             update_exif_time(path, updated_time, updated_offset)
-                        print_status("updated", str(path), f"[{original_label:25}] -> [{updated_label}]", "green")
+                        print_status("updated", str(path), f"[{original_label:25}] -> [{updated_label}]", "green", message_first=True)
                         updated += 1
                 except (ValueError, OSError, click.ClickException) as error:
                     print_status("skipped", filename, str(error), "red")
