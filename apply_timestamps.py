@@ -5,6 +5,7 @@ import csv
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path, PurePosixPath
+from tempfile import NamedTemporaryFile
 
 import click
 from rich.console import Console
@@ -93,7 +94,14 @@ def update_exif_time(path: Path, timestamp: str, offset: str | None) -> None:
         exif[piexif.ExifIFD.OffsetTime] = encoded_offset
         exif[piexif.ExifIFD.OffsetTimeOriginal] = encoded_offset
         exif[piexif.ExifIFD.OffsetTimeDigitized] = encoded_offset
-    piexif.insert(piexif.dump(data), str(path))
+    with NamedTemporaryFile(dir=path.parent, suffix=path.suffix, delete=False) as temp:
+        temp_path = Path(temp.name)
+    try:
+        piexif.insert(piexif.dump(data), str(path), str(temp_path))
+        temp_path.chmod(path.stat().st_mode)
+        temp_path.replace(path)
+    finally:
+        temp_path.unlink(missing_ok=True)
 
 
 def csv_row_count(path: Path) -> int:
