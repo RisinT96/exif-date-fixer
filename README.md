@@ -33,7 +33,7 @@ When importing photos again after a reload, select the original files so the app
 
 CSV export asks for an IANA timezone, defaulting to `Asia/Jerusalem`. The timeline’s visible clock value is kept unchanged and the selected timezone is attached to it. The CSV includes:
 
-- the filename;
+- the folder-relative path when available (otherwise the filename);
 - the timestamp with its timezone offset;
 - the equivalent UTC timestamp;
 - the timezone name;
