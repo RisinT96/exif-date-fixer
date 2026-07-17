@@ -8,6 +8,10 @@ This was made for a wedding collection of roughly 5,500 photos. Around 3,000 had
 
 It is useful for the same situation whenever a batch contains a mixture of reliable and missing EXIF/XMP capture dates.
 
+## Preview
+
+![Photo Timestamp Editor showing anchored and interpolated wedding photos on the timeline](assets/gallery.png)
+
 ## How it works
 
 - Photos with an existing timestamp are placed on the timeline as anchors.
