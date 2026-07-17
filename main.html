@@ -3641,6 +3641,7 @@ function openPhotoViewer(event, id) {
   overlay.style.display = 'flex';
   document.body.style.overflow = 'hidden';
   if (photo.inTimeline) focusTimelinePhotoIfNeeded(photoId, true);
+  else focusPoolPhotoIfNeeded(photoId);
 }
 
 function updateViewerMeta(photo) {
