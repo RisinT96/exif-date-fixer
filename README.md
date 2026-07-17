@@ -48,10 +48,10 @@ For example, a displayed time of `18:00:00` in `Asia/Jerusalem` may be exported 
 ```bash
 python3 -m pip install -r requirements.txt
 python3 apply_timestamps.py --dry-run timestamps.csv /path/to/photos
-python3 apply_timestamps.py timestamps.csv /path/to/photos
+python3 apply_timestamps.py --accept-auto-detected timestamps.csv /path/to/photos
 ```
 
-The script first resolves CSV filenames relative to the photo root, then falls back to a unique matching basename. It refuses ambiguous filenames. Dry-run prints `[path] [original timestamp] -> [updated timestamp]` without changing files.
+The script first resolves CSV filenames relative to the photo root. When that fails, it shows a suffix/basename auto-detected file and asks for confirmation; use `--accept-auto-detected` to accept these matches automatically. It refuses ambiguous filenames. Dry-run prints `[path] [original timestamp] -> [updated timestamp]` without changing files.
 
 ## Import performance
 

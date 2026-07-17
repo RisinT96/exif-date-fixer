@@ -31,17 +31,23 @@ def indexed_files(root: Path) -> dict[str, list[Path]]:
     return files
 
 
-def resolve_photo(root: Path, filename: str, files: dict[str, list[Path]]) -> Path:
+def resolve_photo(root: Path, filename: str, files: dict[str, list[Path]] | None = None) -> tuple[Path | None, bool]:
     relative = Path(*PurePosixPath(filename).parts)
-    candidate = (root / relative).resolve()
-    if candidate.is_file() and root in candidate.parents:
-        return candidate
+    for index in range(len(relative.parts)):
+        candidate = (root / Path(*relative.parts[index:])).resolve()
+        if candidate.is_file() and root in candidate.parents:
+            return candidate, index > 0
+    if files is None:
+        return None, False
     matches = files.get(relative.name, [])
+    suffix_matches = [path for path in matches if filename.endswith(path.relative_to(root).as_posix())]
+    if len(suffix_matches) == 1:
+        return suffix_matches[0], True
     if len(matches) == 1:
-        return matches[0]
+        return matches[0], True
     if not matches:
         raise click.ClickException(f"not found: {filename}")
-    raise click.ClickException(f"ambiguous filename: {filename}")
+    raise click.ClickException(f"ambiguous auto-detected filename: {filename}")
 
 
 def exif_time(path: Path) -> str:
@@ -77,14 +83,16 @@ def csv_row_count(path: Path) -> int:
 @click.argument("csv_path", type=click.Path(exists=True, dir_okay=False, path_type=Path))
 @click.argument("photos_root", type=click.Path(exists=True, file_okay=False, path_type=Path))
 @click.option("--dry-run", is_flag=True, help="Print changes without writing EXIF metadata.")
-def main(csv_path: Path, photos_root: Path, dry_run: bool) -> None:
+@click.option("--accept-auto-detected", is_flag=True, help="Use non-exact path matches without prompting.")
+def main(csv_path: Path, photos_root: Path, dry_run: bool, accept_auto_detected: bool) -> None:
     """Apply CSV timestamps to photos below PHOTOS_ROOT."""
     try:
         import piexif  # noqa: F401
     except ImportError as error:
         raise click.ClickException("install dependencies with: python3 -m pip install -r requirements.txt") from error
-    files = indexed_files(photos_root.resolve())
-    updated = skipped = 0
+    root = photos_root.resolve()
+    files = None
+    updated = skipped = same = 0
     total = csv_row_count(csv_path)
     with csv_path.open(newline="", encoding="utf-8") as stream:
         with Progress(console=console) as progress:
@@ -94,22 +102,44 @@ def main(csv_path: Path, photos_root: Path, dry_run: bool) -> None:
                 try:
                     if not filename or not timestamp:
                         skipped += 1
+                        console.print(f"[{'skipped':<7}] [{filename or '<missing filename>'}] missing timestamp", style="yellow", markup=False)
                         continue
-                    path = resolve_photo(photos_root.resolve(), filename, files)
+                    path, auto_detected = resolve_photo(root, filename, files)
+                    if path is None:
+                        progress.update(task, description="Indexing photos")
+                        files = indexed_files(root)
+                        progress.update(task, description="Checking" if dry_run else "Updating")
+                        path, auto_detected = resolve_photo(root, filename, files)
+                    if auto_detected and not accept_auto_detected:
+                        progress.stop()
+                        try:
+                            console.print(
+                                f"[{'auto':<7}] [{path}] for [{filename}] type y then Enter to use it:",
+                                style="yellow", markup=False,
+                            )
+                            accepted = input().strip().lower() in ("y", "yes")
+                        finally:
+                            progress.start()
+                        if not accepted:
+                            raise click.ClickException("auto-detected photo declined")
                     updated_time = parse_timestamp(timestamp)
                     original_time = exif_time(path)
                     line = f"[{path}] [{original_time:19}] -> [{updated_time}]"
-                    if not dry_run:
-                        update_exif_time(path, updated_time)
-                    console.print(line, markup=False)
-                    updated += 1
+                    if original_time == updated_time:
+                        same += 1
+                        console.print(f"[{'same':<7}] {line}", markup=False)
+                    else:
+                        if not dry_run:
+                            update_exif_time(path, updated_time)
+                        console.print(f"[{'updated':<7}] {line}", markup=False)
+                        updated += 1
                 except (ValueError, OSError, click.ClickException) as error:
-                    console.print(f"{filename}: {error}", style="red", markup=False)
+                    console.print(f"[{'skipped':<7}] [{filename}] {error}", style="red", markup=False)
                     skipped += 1
                 finally:
                     progress.advance(task)
     if not dry_run:
-        console.print(f"Updated {updated}; skipped {skipped}.")
+        console.print(f"Updated {updated}; same {same}; skipped {skipped}.")
 
 
 if __name__ == "__main__":
