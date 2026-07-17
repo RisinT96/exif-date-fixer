@@ -41,6 +41,18 @@ CSV export asks for an IANA timezone, defaulting to `Asia/Jerusalem`. The timeli
 
 For example, a displayed time of `18:00:00` in `Asia/Jerusalem` may be exported as `18:00:00+03:00` in summer and `18:00:00+02:00` in winter, with the corresponding UTC value included. This output can be used as input when batch-updating image metadata with ExifTool or a similar tool.
 
+## Applying timestamps to photos
+
+`apply_timestamps.py` writes the exported CSV timestamps to JPEG/WebP files using `piexif`.
+
+```bash
+python3 -m pip install -r requirements.txt
+python3 apply_timestamps.py --dry-run timestamps.csv /path/to/photos
+python3 apply_timestamps.py timestamps.csv /path/to/photos
+```
+
+The script first resolves CSV filenames relative to the photo root, then falls back to a unique matching basename. It refuses ambiguous filenames. Dry-run prints `[path] [original timestamp] -> [updated timestamp]` without changing files.
+
 ## Import performance
 
 Photo processing uses a bounded pool of Web Workers for fingerprinting, EXIF/XMP parsing, and thumbnail generation. The worker multiplier can be changed in **Settings**. Higher values may improve import speed but use more CPU and memory.
