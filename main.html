@@ -1018,6 +1018,7 @@ let suppressCardClick = false;
 let virtualTimelineKey = null;
 let virtualTimelineFrame = null;
 let timelineScrollAnimation = null;
+let timelineMoveScrollToken = 0;
 let pendingSessionScroll = null;
 let zoomRestoreFrame = null;
 let zoomAnchorId = null;
@@ -3046,6 +3047,7 @@ function reorderTimelineDom(affectedIds, animateIds = affectedIds) {
 function moveSelectedTimeline(delta) {
   const ids = selectedIdsInSource('timeline');
   if (!ids.length) return false;
+  const scrollState = captureTimelineMoveScrollState(ids, delta);
   const selected = new Set(ids);
   const moved = [...timeline];
   const previousTimeline = [...timeline];
@@ -3073,7 +3075,46 @@ function moveSelectedTimeline(delta) {
   interpolateAll();
   const affectedIds = getAffectedTimelineIds(previousTimeline, timeline, new Set(ids));
   reorderTimelineDom(affectedIds, new Set(ids));
+  restoreTimelineMoveScrollState(scrollState);
   return true;
+}
+
+function captureTimelineMoveScrollState(ids, delta) {
+  const scroll = document.querySelector('.timeline-scroll');
+  const area = scroll?.getBoundingClientRect();
+  if (!scroll || !area) return null;
+  const first = document.querySelector(`#timelineList .photo-card[data-photo-id="${ids[0]}"]`);
+  const last = document.querySelector(`#timelineList .photo-card[data-photo-id="${ids.at(-1)}"]`);
+  const visible = card => {
+    const rect = card?.getBoundingClientRect();
+    return rect && rect.top >= area.top && rect.bottom <= area.bottom;
+  };
+  if (visible(first) && visible(last)) return { ids };
+  const edge = delta > 0
+    ? (visible(last) ? ids.at(-1) : visible(first) ? ids[0] : null)
+    : (visible(first) ? ids[0] : visible(last) ? ids.at(-1) : null);
+  return edge ? { ids: [edge] } : null;
+}
+
+function restoreTimelineMoveScrollState(state) {
+  if (!state) return;
+  const token = ++timelineMoveScrollToken;
+  afterStructuralAnimations(() => requestAnimationFrame(() => {
+    if (token !== timelineMoveScrollToken) return;
+    const scroll = document.querySelector('.timeline-scroll');
+    const area = scroll?.getBoundingClientRect();
+    if (!scroll || !area) return;
+    const rects = state.ids.map(id => document.querySelector(`#timelineList .photo-card[data-photo-id="${id}"]`)?.getBoundingClientRect())
+      .filter(Boolean);
+    if (!rects.length) return;
+    const top = Math.min(...rects.map(rect => rect.top));
+    const bottom = Math.max(...rects.map(rect => rect.bottom));
+    const padding = 16;
+    let target = scroll.scrollTop;
+    if (top < area.top + padding) target += top - area.top - padding;
+    else if (bottom > area.bottom - padding) target += bottom - area.bottom + padding;
+    animateTimelineScrollTo(scroll, target);
+  }));
 }
 
 function onCardPointerDown(event, id, source) {
