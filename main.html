@@ -2305,7 +2305,8 @@ function onCardContainerClick(event) {
     return;
   }
   if (action === 'delete') {
-    deletePhotos([id]);
+    deletePhotos(source === 'pool' && selectedIds.has(id)
+      ? selectedIdsInSource('pool') : [id]);
     return;
   }
   if (action === 'edit-timestamp') {
@@ -2485,7 +2486,9 @@ function deletePhotos(ids) {
   if (!ids.length) return;
   const start = performance.now();
   const previousTimeline = [...timeline];
+  const previousUnplaced = [...unplaced];
   const focusId = ids.length > 1 ? getRemovalFocusId(previousTimeline, ids) : null;
+  const poolFocusId = ids.length > 1 ? getPoolRemovalFocusId(previousUnplaced, ids) : null;
   const previousPhotos = Object.fromEntries(ids.map(id => [id, photos[id]]));
   pushHistory();
   const deleted = new Set(ids);
@@ -2517,6 +2520,7 @@ function deletePhotos(ids) {
   recordPerformance('Delete from Editor', start);
   recordPerformanceAfterPaint('Delete to paint', start);
   focusTimelinePhotoIfNeeded(focusId, true);
+  focusPoolPhotoIfNeeded(poolFocusId);
 }
 
 function selectAllInActiveList() {
@@ -3277,6 +3281,7 @@ function onDropTargetDrop(e, insertIdx) {
   if (!ids.length) return;
   const movedIds = new Set(ids);
   const previousTimeline = [...timeline];
+  const previousUnplaced = [...unplaced];
   pushHistory();
   if (source === 'pool') {
     const selected = new Set(ids);
@@ -3288,6 +3293,7 @@ function onDropTargetDrop(e, insertIdx) {
     removePoolCards(ids);
     insertTimelineEntries(ids);
     finalizeIncrementalTransfer(getTransferAffectedIds(previousTimeline, timeline, movedIds), movedIds);
+    focusPoolPhotoIfNeeded(ids.length > 1 ? getPoolRemovalFocusId(previousUnplaced, ids) : null);
     recordPerformance('Drop to Timeline', start);
     recordPerformanceAfterPaint('Drop to Timeline paint', start);
     return;
@@ -3777,6 +3783,21 @@ function getRemovalFocusId(previousTimeline, ids) {
   return null;
 }
 
+function getPoolRemovalFocusId(previousUnplaced, ids) {
+  const removed = new Set(ids.map(String));
+  const displayIds = previousUnplaced.filter(matchesPhotoSearch);
+  const positions = ids.map(id => displayIds.indexOf(String(id))).filter(index => index >= 0);
+  if (!positions.length) return null;
+  const lastIndex = Math.max(...positions);
+  for (let index = lastIndex + 1; index < displayIds.length; index++) {
+    if (!removed.has(String(displayIds[index]))) return String(displayIds[index]);
+  }
+  for (let index = Math.min(...positions) - 1; index >= 0; index--) {
+    if (!removed.has(String(displayIds[index]))) return String(displayIds[index]);
+  }
+  return null;
+}
+
 function focusTimelinePhotoIfNeeded(id, forceCenter = false) {
   if (!id || !timeline.includes(String(id))) return;
   const requestedAt = performance.now();
@@ -3801,6 +3822,20 @@ function focusTimelinePhotoIfNeeded(id, forceCenter = false) {
     if (card && area && rect) {
       animateTimelineScrollTo(scroll, scroll.scrollTop + rect.top - area.top - (area.height - rect.height) / 2, requestedAt);
     }
+  });
+  if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) focus();
+  else afterStructuralAnimations(focus);
+}
+
+function focusPoolPhotoIfNeeded(id) {
+  if (!id || !unplaced.includes(String(id))) return;
+  const focus = () => requestAnimationFrame(() => {
+    const scroll = document.querySelector('.unplaced-pool');
+    const card = document.querySelector(`#poolGrid .pool-card[data-photo-id="${id}"]`);
+    const area = scroll?.getBoundingClientRect();
+    const rect = card?.getBoundingClientRect();
+    if (!scroll || !card || !area || !rect) return;
+    animateTimelineScrollTo(scroll, scroll.scrollTop + rect.top - area.top - (area.height - rect.height) / 2);
   });
   if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) focus();
   else afterStructuralAnimations(focus);
@@ -4236,6 +4271,9 @@ document.addEventListener('keydown', e => {
     if (selectedIdsInSource('timeline').length) {
       e.preventDefault();
       removeSelectedFromTimeline();
+    } else if (selectedIdsInSource('pool').length) {
+      e.preventDefault();
+      deletePhotos(selectedIdsInSource('pool'));
     }
   }
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') {
