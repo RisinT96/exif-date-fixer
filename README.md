@@ -72,6 +72,10 @@ python3 apply_timestamps.py photo_timestamps.csv /path/to/photos
 python3 apply_timestamps.py --accept-auto-detected photo_timestamps.csv /path/to/photos
 ```
 
+### Dry-run output
+
+![Dry-run output showing updated and unchanged timestamps](assets/dry-run.png)
+
 The script first tries each CSV path relative to the supplied photo root.
 If it cannot find an exact match, it displays an auto-detected suffix or basename match and asks before using it.
 `--accept-auto-detected` suppresses those prompts.
