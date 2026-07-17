@@ -57,7 +57,7 @@ The exported CSV contains the folder-relative path when available, a local times
 
 ## Apply timestamps to image files
 
-`apply_timestamps.py` reads an exported CSV and updates `DateTime`, `DateTimeOriginal`, and `DateTimeDigitized` EXIF fields in JPEG/WebP files. It writes files in place; make a backup first.
+`apply_timestamps.py` reads an exported CSV and updates `DateTime`, `DateTimeOriginal`, `DateTimeDigitized`, and their EXIF UTC-offset fields in JPEG/WebP files. It writes files in place; make a backup first.
 
 ```bash
 python3 -m pip install -r requirements.txt

@@ -23,12 +23,14 @@ def print_status(status: str, path: str, message: str, style: str, message_style
     console.print(line, highlight=False)
 
 
-def parse_timestamp(value: str) -> str:
-    """Convert the CSV's local timestamp (with optional UTC offset) to EXIF time."""
+def parse_timestamp(value: str) -> tuple[str, str | None]:
+    """Convert the CSV timestamp to EXIF wall time and its UTC offset."""
     value = value.strip()
     if len(value) >= 10 and value[4] == value[7] == ":":
         value = f"{value[:4]}-{value[5:7]}-{value[8:]}"
-    return datetime.fromisoformat(value).strftime(EXIF_TIME_FORMAT)
+    timestamp = datetime.fromisoformat(value)
+    offset = timestamp.strftime("%z")
+    return timestamp.strftime(EXIF_TIME_FORMAT), f"{offset[:3]}:{offset[3:]}" if offset else None
 
 
 def indexed_files(root: Path) -> dict[str, list[Path]]:
@@ -58,17 +60,22 @@ def resolve_photo(root: Path, filename: str, files: dict[str, list[Path]] | None
     raise click.ClickException(f"ambiguous auto-detected filename: {filename}")
 
 
-def exif_time(path: Path) -> str:
+def exif_timestamp(path: Path) -> tuple[str, tuple[str, str, str]]:
     import piexif
 
     data = piexif.load(str(path))
     value = (data.get("Exif", {}).get(piexif.ExifIFD.DateTimeOriginal)
              or data.get("0th", {}).get(piexif.ImageIFD.DateTime)
              or b"")
-    return value.decode("ascii", "replace") if value else ""
+    exif = data.get("Exif", {})
+    offsets = tuple(
+        exif.get(tag, b"").decode("ascii", "replace")
+        for tag in (piexif.ExifIFD.OffsetTime, piexif.ExifIFD.OffsetTimeOriginal, piexif.ExifIFD.OffsetTimeDigitized)
+    )
+    return value.decode("ascii", "replace") if value else "", offsets
 
 
-def update_exif_time(path: Path, timestamp: str) -> None:
+def update_exif_time(path: Path, timestamp: str, offset: str | None) -> None:
     import piexif
 
     data = piexif.load(str(path))
@@ -77,6 +84,11 @@ def update_exif_time(path: Path, timestamp: str) -> None:
     exif = data.setdefault("Exif", {})
     exif[piexif.ExifIFD.DateTimeOriginal] = encoded
     exif[piexif.ExifIFD.DateTimeDigitized] = encoded
+    if offset:
+        encoded_offset = offset.encode("ascii")
+        exif[piexif.ExifIFD.OffsetTime] = encoded_offset
+        exif[piexif.ExifIFD.OffsetTimeOriginal] = encoded_offset
+        exif[piexif.ExifIFD.OffsetTimeDigitized] = encoded_offset
     piexif.insert(piexif.dump(data), str(path))
 
 
@@ -127,15 +139,18 @@ def main(csv_path: Path, photos_root: Path, dry_run: bool, accept_auto_detected:
                             progress.start()
                         if not accepted:
                             raise click.ClickException("auto-detected photo declined")
-                    updated_time = parse_timestamp(timestamp)
-                    original_time = exif_time(path)
-                    if original_time == updated_time:
+                    updated_time, updated_offset = parse_timestamp(timestamp)
+                    updated_label = f"{updated_time}{updated_offset or ''}"
+                    original_time, original_offsets = exif_timestamp(path)
+                    original_offset = next((offset for offset in (original_offsets[1], original_offsets[0], original_offsets[2]) if offset), "")
+                    original_label = f"{original_time}{original_offset}"
+                    if original_time == updated_time and all(offset == (updated_offset or "") for offset in original_offsets):
                         same += 1
-                        print_status("same", str(path), f"[{original_time:19}] -> [{updated_time}]", "cyan", "green")
+                        print_status("same", str(path), f"[{original_label:25}] -> [{updated_label}]", "cyan", "green")
                     else:
                         if not dry_run:
-                            update_exif_time(path, updated_time)
-                        print_status("updated", str(path), f"[{original_time:19}] -> [{updated_time}]", "green")
+                            update_exif_time(path, updated_time, updated_offset)
+                        print_status("updated", str(path), f"[{original_label:25}] -> [{updated_label}]", "green")
                         updated += 1
                 except (ValueError, OSError, click.ClickException) as error:
                     print_status("skipped", filename, str(error), "red")
