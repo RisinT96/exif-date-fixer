@@ -9,10 +9,18 @@ from pathlib import Path, PurePosixPath
 import click
 from rich.console import Console
 from rich.progress import Progress
+from rich.text import Text
 
 
 EXIF_TIME_FORMAT = "%Y:%m:%d %H:%M:%S"
 console = Console()
+
+
+def print_status(status: str, path: str, message: str, style: str, message_style: str | None = None) -> None:
+    line = Text(f"[{status:<7}] ", style=style)
+    line.append(f"[{path}] ", style="dim")
+    line.append(message, style=message_style or style)
+    console.print(line, highlight=False)
 
 
 def parse_timestamp(value: str) -> str:
@@ -102,7 +110,7 @@ def main(csv_path: Path, photos_root: Path, dry_run: bool, accept_auto_detected:
                 try:
                     if not filename or not timestamp:
                         skipped += 1
-                        console.print(f"[{'skipped':<7}] [{filename or '<missing filename>'}] missing timestamp", style="yellow", markup=False)
+                        print_status("skipped", filename or "<missing filename>", "missing timestamp", "yellow")
                         continue
                     path, auto_detected = resolve_photo(root, filename, files)
                     if path is None:
@@ -113,10 +121,7 @@ def main(csv_path: Path, photos_root: Path, dry_run: bool, accept_auto_detected:
                     if auto_detected and not accept_auto_detected:
                         progress.stop()
                         try:
-                            console.print(
-                                f"[{'auto':<7}] [{path}] for [{filename}] type y then Enter to use it:",
-                                style="yellow", markup=False,
-                            )
+                            print_status("auto", str(path), f"for [{filename}] type y then Enter to use it:", "yellow")
                             accepted = input().strip().lower() in ("y", "yes")
                         finally:
                             progress.start()
@@ -124,17 +129,16 @@ def main(csv_path: Path, photos_root: Path, dry_run: bool, accept_auto_detected:
                             raise click.ClickException("auto-detected photo declined")
                     updated_time = parse_timestamp(timestamp)
                     original_time = exif_time(path)
-                    line = f"[{path}] [{original_time:19}] -> [{updated_time}]"
                     if original_time == updated_time:
                         same += 1
-                        console.print(f"[{'same':<7}] {line}", markup=False)
+                        print_status("same", str(path), f"[{original_time:19}] -> [{updated_time}]", "cyan", "green")
                     else:
                         if not dry_run:
                             update_exif_time(path, updated_time)
-                        console.print(f"[{'updated':<7}] {line}", markup=False)
+                        print_status("updated", str(path), f"[{original_time:19}] -> [{updated_time}]", "green")
                         updated += 1
                 except (ValueError, OSError, click.ClickException) as error:
-                    console.print(f"[{'skipped':<7}] [{filename}] {error}", style="red", markup=False)
+                    print_status("skipped", filename, str(error), "red")
                     skipped += 1
                 finally:
                     progress.advance(task)
