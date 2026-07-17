@@ -72,7 +72,15 @@ python3 apply_timestamps.py photo_timestamps.csv /path/to/photos
 python3 apply_timestamps.py --accept-auto-detected photo_timestamps.csv /path/to/photos
 ```
 
-The script first tries each CSV path relative to the supplied photo root. If it cannot find an exact match, it displays an auto-detected suffix or basename match and asks before using it. `--accept-auto-detected` suppresses those prompts. Ambiguous matches are skipped, and files whose EXIF timestamp already matches the CSV are reported as `same` without being rewritten. Output is prefixed with `updated`, `same`, or `skipped`; timestamps are shown as `[original] -> [updated]`.
+The script first tries each CSV path relative to the supplied photo root.
+If it cannot find an exact match, it displays an auto-detected suffix or basename match and asks before using it.
+`--accept-auto-detected` suppresses those prompts.
+Ambiguous matches are skipped, and files whose EXIF timestamp already matches the CSV are reported as `same` without being rewritten.
+
+Output is prefixed with `updated`, `same`, or `skipped`; timestamps are shown as:
+```
+[original] -> [updated]
+```
 
 ## Large collections and browser requirements
 
