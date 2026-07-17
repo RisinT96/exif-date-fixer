@@ -1018,6 +1018,9 @@ let virtualTimelineKey = null;
 let virtualTimelineFrame = null;
 let timelineScrollAnimation = null;
 let pendingSessionScroll = null;
+let zoomRestoreFrame = null;
+let zoomAnchorId = null;
+let zoomAnchorIndex = -1;
 
 const CAM1 = 'DSC';
 const CAM2 = '976A';
@@ -1187,6 +1190,24 @@ function normalizeZoom(value) {
 }
 
 function setZoom(value, save = false) {
+  const scroll = document.querySelector('.timeline-scroll');
+  if (scroll) {
+    const centerY = scroll.getBoundingClientRect().top + scroll.clientHeight / 2;
+    const visibleIds = timelineDisplayIds();
+    const selectedAnchor = visibleIds.find(id => selectedIds.has(String(id)));
+    if (selectedAnchor) zoomAnchorId = selectedAnchor;
+    let nearest = null;
+    let distance = Infinity;
+    if (!selectedAnchor) scroll.querySelectorAll('.photo-card[data-photo-id]').forEach(card => {
+      const rect = card.getBoundingClientRect();
+      if (rect.bottom < scroll.getBoundingClientRect().top || rect.top > scroll.getBoundingClientRect().bottom) return;
+      const nextDistance = Math.abs((rect.top + rect.height / 2) - centerY);
+      if (nextDistance < distance) { distance = nextDistance; nearest = card.dataset.photoId; }
+    });
+    if (!selectedAnchor) zoomAnchorId = nearest;
+    const anchorId = selectedAnchor || nearest;
+    zoomAnchorIndex = anchorId ? visibleIds.indexOf(anchorId) : -1;
+  }
   zoomLevel = normalizeZoom(value);
   const scale = zoomLevel / 100;
   document.documentElement.style.setProperty('--photo-card-width', `${160 * scale}px`);
@@ -1197,7 +1218,37 @@ function setZoom(value, save = false) {
   if (range) range.value = String(zoomLevel);
   if (label) label.textContent = `${zoomLevel}%`;
   invalidateVirtualTimeline();
+  const positionVirtualZoom = shouldVirtualizeTimeline() && zoomAnchorIndex >= 0;
+  if (positionVirtualZoom && scroll) {
+    const { columns, rowHeight } = virtualTimelineLayout();
+    scroll.scrollTop = Math.max(0,
+      Math.floor(zoomAnchorIndex / columns) * rowHeight
+      - (scroll.clientHeight - rowHeight) / 2
+    );
+  }
   scheduleVirtualTimelineRender();
+  if (zoomRestoreFrame !== null) cancelAnimationFrame(zoomRestoreFrame);
+  zoomRestoreFrame = requestAnimationFrame(() => {
+    zoomRestoreFrame = null;
+    const target = zoomAnchorId && document.querySelector(`#timelineList .photo-card[data-photo-id="${zoomAnchorId}"]`);
+    const currentScroll = document.querySelector('.timeline-scroll');
+    if (positionVirtualZoom) {
+      renderVirtualTimeline();
+    } else if (target && currentScroll) {
+      const bounds = currentScroll.getBoundingClientRect();
+      currentScroll.scrollTop += target.getBoundingClientRect().top + target.offsetHeight / 2
+        - (bounds.top + currentScroll.clientHeight / 2);
+      scheduleVirtualTimelineRender();
+    } else if (currentScroll && zoomAnchorIndex >= 0 && shouldVirtualizeTimeline()) {
+      const { columns, rowHeight } = virtualTimelineLayout();
+      currentScroll.scrollTop = Math.max(0,
+        Math.floor(zoomAnchorIndex / columns) * rowHeight
+        - (currentScroll.clientHeight - rowHeight) / 2
+      );
+      invalidateVirtualTimeline();
+      renderVirtualTimeline();
+    }
+  });
   if (save) scheduleSessionSave();
 }
 
