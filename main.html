@@ -681,7 +681,8 @@
   .modal p { font-size: 13px; color: var(--color-muted); margin-bottom: 16px; line-height: 1.5; }
   .modal input[type="datetime-local"],
   .modal input[type="number"],
-  .modal input[type="text"] {
+  .modal input[type="text"],
+  .modal input[type="search"] {
     width: 100%;
     padding: 8px 10px;
     background: #13131a;
@@ -938,7 +939,8 @@
     <h2>Export timezone</h2>
     <p>The timeline clock values will be kept unchanged and this IANA timezone will be attached to them.</p>
     <label for="csvTimezone" style="display:block;margin-bottom:6px;font-size:12px;color:#c8c4be">Timezone</label>
-    <input type="text" id="csvTimezone" value="Asia/Jerusalem" spellcheck="false" aria-label="CSV export timezone">
+    <input type="search" id="csvTimezone" list="csvTimezoneOptions" value="Asia/Jerusalem" spellcheck="false" autocomplete="off" aria-label="CSV export timezone">
+    <datalist id="csvTimezoneOptions"></datalist>
     <div class="modal-actions">
       <button class="btn btn-ghost" onclick="closeCsvTimezoneModal()">Cancel</button>
       <button class="btn btn-primary" onclick="downloadCSV()">Export</button>
@@ -3531,6 +3533,7 @@ function restoreTimestamps() {
 
 // ── EXPORT, IMPORT, AND SUMMARY MODALS ─────────────────────────────────────
 function exportCSV() {
+  populateCsvTimezoneOptions();
   document.getElementById('csvTimezoneModal').style.display = 'flex';
 }
 
@@ -3544,6 +3547,13 @@ function openHelp() {
 
 function closeHelp() {
   document.getElementById('helpModal').style.display = 'none';
+}
+
+function populateCsvTimezoneOptions() {
+  const options = document.getElementById('csvTimezoneOptions');
+  if (options.options.length) return;
+  const zones = Intl.supportedValuesOf?.('timeZone') || ['UTC', Intl.DateTimeFormat().resolvedOptions().timeZone, 'Asia/Jerusalem'];
+  options.replaceChildren(...[...new Set(zones)].sort().map(zone => new Option(zone)));
 }
 
 function timezoneParts(date, timeZone) {
