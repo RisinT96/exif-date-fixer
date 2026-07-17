@@ -238,6 +238,7 @@
     padding: 10px;
     scroll-behavior: auto;
     overscroll-behavior: contain;
+    overflow-anchor: none;
   }
 
   .unplaced-pool h3 {
@@ -574,7 +575,7 @@
     gap: 4px;
     transition: all 0.12s;
     content-visibility: auto;
-    contain-intrinsic-size: 120px 82px;
+    contain-intrinsic-size: 120px calc(var(--photo-thumb-height, 140px) + 34px);
     min-width: 0;
     overflow: hidden;
   }
@@ -1757,8 +1758,13 @@ function applyPendingSessionScroll() {
   if (!pendingSessionScroll) return;
   const timelineScroll = document.querySelector('.timeline-scroll');
   const poolScroll = document.querySelector('.unplaced-pool');
-  if (timelineScroll) timelineScroll.scrollTop = pendingSessionScroll.timeline;
-  if (poolScroll) poolScroll.scrollTop = pendingSessionScroll.pool;
+  const savedScroll = pendingSessionScroll;
+  const restore = () => {
+    if (timelineScroll) timelineScroll.scrollTop = savedScroll.timeline;
+    if (poolScroll) poolScroll.scrollTop = savedScroll.pool;
+  };
+  restore();
+  requestAnimationFrame(() => requestAnimationFrame(restore));
   pendingSessionScroll = null;
   updateSelectionUI();
   updateTimelineSearchStatus();
@@ -2486,9 +2492,8 @@ function deletePhotos(ids) {
   if (!ids.length) return;
   const start = performance.now();
   const previousTimeline = [...timeline];
-  const previousUnplaced = [...unplaced];
   const focusId = ids.length > 1 ? getRemovalFocusId(previousTimeline, ids) : null;
-  const poolFocusId = ids.length > 1 ? getPoolRemovalFocusId(previousUnplaced, ids) : null;
+  const poolFocusId = ids.length > 1 ? getPoolRemovalFocusId(ids) : null;
   const previousPhotos = Object.fromEntries(ids.map(id => [id, photos[id]]));
   pushHistory();
   const deleted = new Set(ids);
@@ -2602,7 +2607,20 @@ function timelineDisplayIdsFor(ids) {
 }
 
 function poolDisplayIds() {
-  return unplaced.filter(matchesPhotoSearch);
+  return poolDisplayIdsFor(unplaced);
+}
+
+function poolDisplayIdsFor(ids) {
+  const groups = new Map();
+  ids.filter(matchesPhotoSearch).forEach(id => {
+    const label = poolFolderLabel(photos[id]);
+    const group = groups.get(label) || [];
+    group.push(id);
+    groups.set(label, group);
+  });
+  return [...groups.entries()]
+    .sort(([a], [b]) => filenameCollator.compare(a, b))
+    .flatMap(([, group]) => group);
 }
 
 function pruneHiddenSelection() {
@@ -3281,7 +3299,7 @@ function onDropTargetDrop(e, insertIdx) {
   if (!ids.length) return;
   const movedIds = new Set(ids);
   const previousTimeline = [...timeline];
-  const previousUnplaced = [...unplaced];
+  const poolFocusId = source === 'pool' && ids.length > 1 ? getPoolRemovalFocusId(ids) : null;
   pushHistory();
   if (source === 'pool') {
     const selected = new Set(ids);
@@ -3293,7 +3311,7 @@ function onDropTargetDrop(e, insertIdx) {
     removePoolCards(ids);
     insertTimelineEntries(ids);
     finalizeIncrementalTransfer(getTransferAffectedIds(previousTimeline, timeline, movedIds), movedIds);
-    focusPoolPhotoIfNeeded(ids.length > 1 ? getPoolRemovalFocusId(previousUnplaced, ids) : null);
+    focusPoolPhotoIfNeeded(poolFocusId);
     recordPerformance('Drop to Timeline', start);
     recordPerformanceAfterPaint('Drop to Timeline paint', start);
     return;
@@ -3784,9 +3802,11 @@ function getRemovalFocusId(previousTimeline, ids) {
   return null;
 }
 
-function getPoolRemovalFocusId(previousUnplaced, ids) {
+function getPoolRemovalFocusId(ids) {
   const removed = new Set(ids.map(String));
-  const displayIds = previousUnplaced.filter(matchesPhotoSearch);
+  const displayIds = [...document.querySelectorAll('#poolGrid .pool-card[data-photo-id]')]
+    .filter(card => !card.closest('.pool-folder.collapsed'))
+    .map(card => card.dataset.photoId);
   const positions = ids.map(id => displayIds.indexOf(String(id))).filter(index => index >= 0);
   if (!positions.length) return null;
   const lastIndex = Math.max(...positions);
@@ -3830,16 +3850,19 @@ function focusTimelinePhotoIfNeeded(id, forceCenter = false) {
 
 function focusPoolPhotoIfNeeded(id) {
   if (!id || !unplaced.includes(String(id))) return;
-  const focus = () => requestAnimationFrame(() => {
+  const focus = () => requestAnimationFrame(() => requestAnimationFrame(() => {
     const scroll = document.querySelector('.unplaced-pool');
     const card = document.querySelector(`#poolGrid .pool-card[data-photo-id="${id}"]`);
     const area = scroll?.getBoundingClientRect();
     const rect = card?.getBoundingClientRect();
     if (!scroll || !card || !area || !rect) return;
-    animateTimelineScrollTo(scroll, scroll.scrollTop + rect.top - area.top - (area.height - rect.height) / 2);
-  });
-  if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) focus();
-  else afterStructuralAnimations(focus);
+    timelineScrollAnimation = null;
+    scroll.scrollTo({
+      top: scroll.scrollTop + rect.top - area.top - (area.height - rect.height) / 2,
+      behavior: window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth'
+    });
+  }));
+  afterStructuralAnimations(focus);
 }
 
 function cancelTimelineScrollAnimation() {
